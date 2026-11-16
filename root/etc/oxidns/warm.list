@@ -1,0 +1,59 @@
+# OxiDNS Plus cache warm list
+# One domain per line; blank lines and #comments are ignored.
+# A and AAAA are queried for every active domain (see warm_types in UCI).
+#
+# Frequency is NOT set here. Edit it in LuCI (Services -> OxiDNS Plus) or:
+#   uci set oxidnsplus.main.warm_interval='2' && uci commit oxidnsplus
+#   /etc/init.d/oxidnsplus restart
+# Units: minutes. Minimum 1. The init script owns the crond block.
+
+# --- YouTube / video ---
+www.youtube.com
+youtube.com
+m.youtube.com
+i.ytimg.com
+i9.ytimg.com
+s.ytimg.com
+yt3.ggpht.com
+yt4.ggpht.com
+googlevideo.com
+i.googlevideo.com
+manifest.googlevideo.com
+redirector.googlevideo.com
+youtubei.googleapis.com
+jnn-pa.googleapis.com
+
+# --- Google core / fonts / static ---
+www.google.com
+clients1.google.com
+apis.google.com
+accounts.google.com
+play.google.com
+fonts.googleapis.com
+fonts.gstatic.com
+www.gstatic.com
+ssl.gstatic.com
+
+# --- GitHub ---
+github.com
+api.github.com
+collector.github.com
+raw.githubusercontent.com
+
+# ------------------------------------------------------------------------------
+# Disabled on purpose: these are matched by the active ad-blocking rules
+# (geosite:category-ads-all and/or the two AdGuard subscriptions).
+# Warming them only produces a black_hole / NXDOMAIN answer that is not cached,
+# so it wastes upstream QPS without making any first visit faster.
+# Uncomment only if you also add them to the allowlist.
+# ------------------------------------------------------------------------------
+# googleads.g.doubleclick.net
+# static.doubleclick.net
+# pubads.g.doubleclick.net
+# securepubads.g.doubleclick.net
+# pagead2.googlesyndication.com
+# tpc.googlesyndication.com
+# www.googletagservices.com
+# www.google-analytics.com
+# ssl.google-analytics.com
+# s0.2mdn.net

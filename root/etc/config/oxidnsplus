@@ -1,0 +1,32 @@
+config main 'main'
+	# ---- cache warming (S1) ----
+	option warm_enabled '1'
+	option warm_interval '2'
+	option warm_types 'A AAAA'
+	option warm_list '/etc/oxidns/warm.list'
+	option warm_on_boot '1'
+	option warm_wait_ready '15'
+	option resolver '127.0.0.1'
+	option resolver_port '5333'
+	option dig_timeout '1'
+	option dig_tries '1'
+	option sleep_between '0'
+
+	# ---- DHCP lease hostnames (S2) ----
+	# Off by default: a config reload drops cache entries newer than the last
+	# cache.dump (600 s). Turn on only after reading docs/CONFIGURATION.md.
+	option dhcp_enabled '0'
+	option dhcp_interval '10'
+	option lease_file '/tmp/dhcp.leases'
+	option lease_domain 'lan'
+	option hosts_output '/etc/oxidns/dhcp-hosts'
+	option dhcp_auto_reload '0'
+
+	# ---- config reload (only used by DHCP sync) ----
+	# signal  = /etc/init.d/oxidns reload  (procd_send_signal, gentle)
+	# restart = /etc/init.d/oxidns restart (costs more cache, always effective)
+	option reload_mode 'signal'
+
+	# ---- paths (kept aligned with luci-app-oxidns defaults) ----
+	option config_path '/etc/oxidns/config.yaml'
+	option working_dir '/var/lib/oxidns'

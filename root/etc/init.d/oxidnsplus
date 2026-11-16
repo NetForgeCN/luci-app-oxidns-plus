@@ -1,0 +1,121 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2026 NetForgeCN - GPL-3.0-or-later
+#
+# OxiDNS Plus has no resident process. This init script owns a marked block in
+# the system crontab and fires one warmer run at boot.
+#
+# Using the system crond (instead of OxiDNS's internal cron/script plugins) is
+# what lets this add-on work without ever editing /etc/oxidns/config.yaml.
+
+START=99
+STOP=10
+
+USE_PROCD=0
+
+EXTRA_COMMANDS="warm sync"
+EXTRA_HELP="	warm	Run one cache warming pass now
+	sync	Regenerate DHCP hosts now (add --reload to also reload OxiDNS)"
+
+CRON_FILE="/etc/crontabs/root"
+BEGIN_MARK="# oxidns-plus:begin"
+END_MARK="# oxidns-plus:end"
+WARM_SH="/usr/libexec/oxidnsplus-warm.sh"
+DHCP_SH="/usr/libexec/oxidnsplus-dhcp-hosts.sh"
+
+uci_get() {
+	if command -v uci >/dev/null 2>&1; then
+		uci -q get "oxidnsplus.main.$1" 2>/dev/null || printf '%s' "$2"
+	else
+		printf '%s' "$2"
+	fi
+}
+
+numeric_or() {
+	case "$1" in
+		''|*[!0-9]*)
+			printf '%s' "$2"
+			;;
+		*)
+			if [ "$1" -ge 1 ] 2>/dev/null; then
+				printf '%s' "$1"
+			else
+				printf '%s' "$2"
+			fi
+			;;
+	esac
+}
+
+remove_cron_block() {
+	[ -f "$CRON_FILE" ] || return 0
+	awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
+		$0 == b { skip = 1; next }
+		$0 == e { skip = 0; next }
+		!skip { print }
+	' "$CRON_FILE" > "$CRON_FILE.oxidnsplus.tmp" || return 1
+	mv "$CRON_FILE.oxidnsplus.tmp" "$CRON_FILE" || return 1
+	chmod 600 "$CRON_FILE" 2>/dev/null || true
+}
+
+reload_cron() {
+	if [ -x /etc/init.d/cron ]; then
+		/etc/init.d/cron restart >/dev/null 2>&1 || true
+	fi
+}
+
+install_cron_block() {
+	warm_on="$(uci_get warm_enabled 1)"
+	dhcp_on="$(uci_get dhcp_enabled 0)"
+	remove_cron_block || return 1
+	[ "$warm_on" = "1" ] || [ "$dhcp_on" = "1" ] || { reload_cron; return 0; }
+
+	mkdir -p "$(dirname "$CRON_FILE")"
+	[ -f "$CRON_FILE" ] || : > "$CRON_FILE"
+	{
+		printf '%s\n' "$BEGIN_MARK"
+		if [ "$warm_on" = "1" ]; then
+			wi="$(numeric_or "$(uci_get warm_interval 2)" 2)"
+			printf '*/%s * * * * %s >/dev/null 2>&1\n' "$wi" "$WARM_SH"
+		fi
+		if [ "$dhcp_on" = "1" ]; then
+			di="$(numeric_or "$(uci_get dhcp_interval 10)" 10)"
+			printf '*/%s * * * * %s >/dev/null 2>&1\n' "$di" "$DHCP_SH"
+		fi
+		printf '%s\n' "$END_MARK"
+	} >> "$CRON_FILE" || return 1
+	reload_cron
+	return 0
+}
+
+start() {
+	install_cron_block || {
+		echo "oxidns-plus: failed to install cron block" >&2
+		return 1
+	}
+	# cron waits one full interval before its first trigger. Fire one pass now
+	# in the background so a cold boot never pays for a cold first visit.
+	if [ "$(uci_get warm_enabled 1)" = "1" ] && [ "$(uci_get warm_on_boot 1)" = "1" ]; then
+		( "$WARM_SH" >/dev/null 2>&1 ) &
+	fi
+}
+
+stop() {
+	remove_cron_block || true
+	reload_cron
+}
+
+restart() {
+	stop
+	start
+}
+
+warm() {
+	"$WARM_SH"
+}
+
+sync() {
+	if [ "${1:-}" = "--reload" ]; then
+		"$DHCP_SH" --reload
+	else
+		"$DHCP_SH"
+	fi
+}
