@@ -1,11 +1,21 @@
 config main 'main'
-	# ---- cache warming (S1) ----
+	# ---- cache warming (S1, TTL-aware) ----
 	option warm_enabled '1'
-	option warm_interval '2'
+	# Poll interval in MINUTES. crond only schedules; the warmer decides which
+	# (domain,type) pairs are actually due from their observed TTL.
+	option warm_interval '1'
 	option warm_types 'A AAAA'
 	option warm_list '/etc/oxidns/warm.list'
 	option warm_on_boot '1'
 	option warm_wait_ready '15'
+	# Refresh when this percent of the TTL remains (20 = refresh at 80% of TTL).
+	option warm_margin_percent '20'
+	# Clamps, in seconds, for the computed refresh interval.
+	option warm_min_ttl '30'
+	option warm_max_ttl '3600'
+	# Fallbacks when dig returns no answer section or the query fails.
+	option warm_noanswer_ttl '300'
+	option warm_retry_ttl '30'
 	option resolver '127.0.0.1'
 	option resolver_port '5333'
 	option dig_timeout '1'
@@ -22,11 +32,6 @@ config main 'main'
 	option hosts_output '/etc/oxidns/dhcp-hosts'
 	option dhcp_auto_reload '0'
 
-	# ---- config reload (only used by DHCP sync) ----
 	# signal  = /etc/init.d/oxidns reload  (procd_send_signal, gentle)
 	# restart = /etc/init.d/oxidns restart (costs more cache, always effective)
 	option reload_mode 'signal'
-
-	# ---- paths (kept aligned with luci-app-oxidns defaults) ----
-	option config_path '/etc/oxidns/config.yaml'
-	option working_dir '/var/lib/oxidns'

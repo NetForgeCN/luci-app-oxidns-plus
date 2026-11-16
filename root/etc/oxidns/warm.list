@@ -2,10 +2,14 @@
 # One domain per line; blank lines and #comments are ignored.
 # A and AAAA are queried for every active domain (see warm_types in UCI).
 #
-# Frequency is NOT set here. Edit it in LuCI (Services -> OxiDNS Plus) or:
-#   uci set oxidnsplus.main.warm_interval='2' && uci commit oxidnsplus
+# This is NOT a fixed "resolve everything every N minutes" list. The warmer
+# reads the TTL of each answer and only re-queries a pair shortly before its
+# cached answer expires. warm_interval is the scheduler poll period in minutes
+# (default 1), not a refresh period. See docs/CONFIGURATION.md.
+#
+# Edit the poll interval / margin in LuCI (Services -> OxiDNS Plus) or:
+#   uci set oxidnsplus.main.warm_interval='1' && uci commit oxidnsplus
 #   /etc/init.d/oxidnsplus restart
-# Units: minutes. Minimum 1. The init script owns the crond block.
 
 # --- YouTube / video ---
 www.youtube.com

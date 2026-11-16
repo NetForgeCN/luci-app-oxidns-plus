@@ -1,6 +1,6 @@
 # 第二阶段：带补丁的自家二进制
 
-> 本版（0.1.0）**没有**改 OxiDNS 二进制。这份文档说明如果将来要把
+> 本版（0.2.0）**没有**改 OxiDNS 二进制。这份文档说明如果将来要把
 > 「先等上游再回 stale」「过期前提前刷新」「原生 prefetch」「主动探测熔断」
 > 等能力做进来，落点在哪、代价是什么、怎么保证不干扰上游仓库。
 
@@ -46,7 +46,7 @@ tarball，`Build/Compile` 为空，`PKG_HASH` 锁死。配置文件里写官方�
 
 | 字段 | 插件 | 语义 | 与现有配置的关系 |
 |---|---|---|---|
-| `serve_stale_client_timeout_ms: 1500` | `cache` | 命中 stale 后先等上游 1.5 s，真失败才回旧值 | 必须 < 上游 timeout(3 s/5 s) 且 < request_timeout(8 s)。启用后 `lazy_cache_ttl` 可从 3600 压到 600 |
+| `serve_stale_client_timeout_ms: 1500` | `cache` | 命中 stale 后先等上游 1.5 s，真失败才回旧值 | 必须 < 上游 timeout(3 s/5 s) 且 < request_timeout(8 s)。缓存 stale 窗口由用户自行在主配置里调整 |
 | `background_refresh_threshold_percent: 10` | `cache` | TTL 剩 10% 时命中触发异步刷新 | 削掉 TTL 到期瞬间的回源尖峰 |
 | `refresh_min_ttl: 5` | `cache` | 短 TTL 不参与提前刷新 | 防止短 TTL 域名被狂刷 |
 | `prefetch_min_hits` | `cache` | 只有够热的条目参与提前刷新 | 抑制 QPS 放大 |
@@ -66,11 +66,12 @@ tarball，`Build/Compile` 为空，`PKG_HASH` 锁死。配置文件里写官方�
 
 | 插件 | 能力 | 边界 |
 |---|---|---|
-| `prefetch` | 读 `domain_set`，做预热 + 按 TTL 刷新 + min_hits，带并发限速 | 能把本版 S1 与批次 1 收成一个原生插件，不再需要系统 crond |
+| `prefetch` | 读 `domain_set`，做预热 + 按 TTL 刷新 + min_hits，带并发限速 | 能把本版 S1 与批次 1 收成一个原生插件，不再需要系统 crond。注意 0.2.0 的 S1 已在外面按 TTL 维持缓存，这个插件的增量只剩「清单外域名」与「热度门槛」 |
 | 主动探测 + 熔断 | 后台定期直连各上游发探测查询，维护 EWMA / 连续失败 / 熔断状态写 marks，外层 `sequence` 用 `mark` 选 forward 子链 | **只能做「探测 + 踢坏上游」**；请求级 EWMA 排序 / 自适应对冲仍要改 `forward` 状态机（L3）。`load_balance` 官方明确无健康检查 |
 
-注意：本版预热与诊断是 L1 脚本，已经能工作。L2b 的价值是**收编**它们，
-不是补缺口——按收益排序它应该排在最后。
+注意：本版预热（0.2.0 起已按 TTL 感知）与诊断是 L1 脚本，已经能工作。
+L2b 的价值是**收编**它们，不是补缺口——按收益排序它应该排在最后。
+即便第二阶段落地，字段也由用户自行写进主配置，本包不代劳。
 
 ## 与国外组 SERVFAIL 原则的冲突
 
@@ -81,6 +82,8 @@ tarball，`Build/Compile` 为空，`PKG_HASH` 锁死。配置文件里写官方�
 
 ## 明确的红线
 
+- **本包任何代码都不读写 `/etc/oxidns/config.yaml`**。第二阶段的新字段由用户
+  自行写进主配置；不复活配置模板、配置调优或配置体检。
 - **不向 `svenshi/oxidns` 提交 PR 之外的任何写入**，也不修改
   `NetForgeCN/luci-app-oxidns` 的现有文件。补丁只存在于本仓库。
 - **不搬 PhotoDNS 源码**：PhotoDNS 是 **GPL-3.0-only**，而本仓库与基础包

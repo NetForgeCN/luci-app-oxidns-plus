@@ -10,8 +10,8 @@ msgstr "OxiDNS 增强"
 msgid "Warming and Diagnostics"
 msgstr "预热与诊断"
 
-msgid "Cache warming, DHCP hostnames, upstream diagnostics and guarded config tuning for an existing OxiDNS runtime."
-msgstr "为已安装的 OxiDNS 提供缓存预热、DHCP 主机名、上游诊断和带回滚的配置调优。"
+msgid "TTL-aware cache warming, DHCP hostnames and upstream diagnostics for an existing OxiDNS runtime. This package never edits your OxiDNS configuration."
+msgstr "为已安装的 OxiDNS 提供按 TTL 感知的缓存预热、DHCP 主机名和上游诊断。本包不修改你的 OxiDNS 配置。"
 
 msgid "Runtime status"
 msgstr "运行状态"
@@ -28,26 +28,14 @@ msgstr "OxiDNS 核心运行中"
 msgid "Helper scripts executable"
 msgstr "辅助脚本可执行"
 
+msgid "Cache keeper"
+msgstr "缓存维持模式"
+
 msgid "Last warming"
 msgstr "上次预热"
 
 msgid "Last DHCP sync"
 msgstr "上次 DHCP 同步"
-
-msgid "Config health"
-msgstr "配置体检"
-
-msgid "lazy_cache_ttl"
-msgstr "stale 缓存保留时长"
-
-msgid "ECS handling"
-msgstr "ECS 处理"
-
-msgid "dhcp-hosts referenced"
-msgstr "已挂载 dhcp-hosts"
-
-msgid "guest branch"
-msgstr "guest 分支"
 
 msgid "Yes"
 msgstr "是"
@@ -61,8 +49,23 @@ msgstr "缓存预热"
 msgid "Enable warming"
 msgstr "启用预热"
 
-msgid "Interval (minutes)"
-msgstr "间隔（分钟）"
+msgid "Poll interval (minutes)"
+msgstr "调度轮询间隔（分钟）"
+
+msgid "Scheduler granularity only; actual refreshes follow each answer TTL."
+msgstr "仅决定调度粒度；实际刷新时机跟随每条应答的 TTL。"
+
+msgid "Refresh margin (%)"
+msgstr "提前刷新比例（%）"
+
+msgid "Refresh when this percent of TTL remains. 20 = refresh at 80% of TTL."
+msgstr "TTL 剩余该比例时刷新。20 表示在 TTL 用掉 80% 时刷新。"
+
+msgid "Min refresh TTL (s)"
+msgstr "最小刷新间隔（秒）"
+
+msgid "Max refresh TTL (s)"
+msgstr "最大刷新间隔（秒）"
 
 msgid "Record types"
 msgstr "记录类型"
@@ -73,17 +76,41 @@ msgstr "开机立即预热一次"
 msgid "Wait for core (seconds)"
 msgstr "等待核心就绪（秒）"
 
+msgid "Warm list path"
+msgstr "预热清单路径"
+
 msgid "Local resolver"
 msgstr "本地解析器"
 
 msgid "Resolver port"
 msgstr "解析端口"
 
+msgid "Advanced"
+msgstr "高级选项"
+
+msgid "No-answer TTL (s)"
+msgstr "无应答 TTL（秒）"
+
+msgid "Used for NODATA / NXDOMAIN / blocked answers with no TTL to read."
+msgstr "用于 NODATA / NXDOMAIN / 被拦截等读不到 TTL 的应答。"
+
+msgid "Retry TTL (s)"
+msgstr "失败重试间隔（秒）"
+
+msgid "Backoff after a failed query."
+msgstr "查询失败后的退避时间。"
+
+msgid "Hosts output"
+msgstr "hosts 输出路径"
+
 msgid "DHCP hostnames"
 msgstr "DHCP 主机名"
 
 msgid "Enable DHCP sync"
 msgstr "启用 DHCP 同步"
+
+msgid "Requires /etc/oxidns/dhcp-hosts in hosts_system.files of your own config.yaml."
+msgstr "需要你在自己的 config.yaml 的 hosts_system.files 中加入 /etc/oxidns/dhcp-hosts。"
 
 msgid "DHCP interval (minutes)"
 msgstr "DHCP 间隔（分钟）"
@@ -94,35 +121,14 @@ msgstr "租约文件"
 msgid "Local domain suffix"
 msgstr "本地域名后缀"
 
-msgid "Hosts output"
-msgstr "hosts 输出路径"
-
 msgid "Auto reload on change"
 msgstr "变化时自动重载"
 
 msgid "Reload mode"
 msgstr "重载方式"
 
-msgid "Advanced paths"
-msgstr "高级路径"
-
-msgid "Config path"
-msgstr "配置路径"
-
-msgid "Working directory"
-msgstr "工作目录"
-
-msgid "Warm list path"
-msgstr "预热清单路径"
-
 msgid "Save Settings"
 msgstr "保存设置"
-
-msgid "Settings saved."
-msgstr "设置已保存。"
-
-msgid "Failed to save settings"
-msgstr "保存设置失败"
 
 msgid "Actions"
 msgstr "操作"
@@ -136,29 +142,17 @@ msgstr "立即同步 DHCP"
 msgid "Run diagnostics"
 msgstr "运行诊断"
 
+msgid "Restore defaults"
+msgstr "还原默认"
+
+msgid "Confirm restore defaults"
+msgstr "确认还原默认"
+
+msgid "Reset Plus settings and warm list, clear runtime state? Your /etc/oxidns/config.yaml is not touched."
+msgstr "将 Plus 设置与预热清单恢复为默认值并清空运行状态？不会改动你的 /etc/oxidns/config.yaml。"
+
 msgid "Query test"
 msgstr "查询测试"
-
-msgid "Config tuning"
-msgstr "配置调优"
-
-msgid "Recommended config"
-msgstr "推荐配置"
-
-msgid "Tune lazy_cache_ttl to 3600 (backup + validation + rollback)."
-msgstr "把 lazy_cache_ttl 调整为 3600（备份 + 校验 + 失败回滚）。"
-
-msgid "Warm list"
-msgstr "预热清单"
-
-msgid "One domain per line. Blank lines and #comments are ignored."
-msgstr "每行一个域名，空行与 # 注释会被忽略。"
-
-msgid "Save Warm List"
-msgstr "保存预热清单"
-
-msgid "Warm list saved."
-msgstr "预热清单已保存。"
 
 msgid "Output"
 msgstr "输出"
@@ -169,17 +163,11 @@ msgstr "处理中…"
 msgid "Done."
 msgstr "完成。"
 
-msgid "Domain"
-msgstr "域名"
+msgid "Warm list"
+msgstr "预热清单"
 
-msgid "Confirm config tuning"
-msgstr "确认配置调优"
+msgid "One domain per line. Blank lines and #comments are ignored."
+msgstr "每行一个域名，空行与 # 注释会被忽略。"
 
-msgid "This changes only lazy_cache_ttl in the existing config and validates with oxidns check. Continue?"
-msgstr "此操作仅修改现有配置中的 lazy_cache_ttl，并用 oxidns check 校验。是否继续？"
-
-msgid "Reload OxiDNS after tuning"
-msgstr "调优后重载 OxiDNS"
-
-msgid "Reload OxiDNS after DHCP sync"
-msgstr "DHCP 同步后重载 OxiDNS"
+msgid "Save Warm List"
+msgstr "保存预热清单"

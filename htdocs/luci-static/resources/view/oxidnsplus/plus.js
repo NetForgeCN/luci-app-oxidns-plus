@@ -4,17 +4,18 @@
 'require ui';
 
 /*
- * luci-app-oxidns-plus - single page for warming, DHCP hostnames, diagnostics.
- * All privileged work goes through the luci.oxidnsplus rpcd backend.
+ * luci-app-oxidns-plus - single page for TTL-aware warming, DHCP hostnames,
+ * diagnostics and one-click restore. All privileged work goes through the
+ * luci.oxidnsplus rpcd backend. No config.yaml access, ever.
  */
 
 var FIELDS = [
 	'warm_enabled', 'warm_interval', 'warm_types', 'warm_list',
-	'warm_on_boot', 'warm_wait_ready', 'resolver', 'resolver_port',
-	'dig_timeout', 'dig_tries', 'sleep_between',
+	'warm_on_boot', 'warm_wait_ready', 'warm_margin_percent',
+	'warm_min_ttl', 'warm_max_ttl', 'warm_noanswer_ttl', 'warm_retry_ttl',
+	'resolver', 'resolver_port', 'dig_timeout', 'dig_tries', 'sleep_between',
 	'dhcp_enabled', 'dhcp_interval', 'lease_file', 'lease_domain',
-	'hosts_output', 'dhcp_auto_reload', 'reload_mode',
-	'config_path', 'working_dir'
+	'hosts_output', 'dhcp_auto_reload', 'reload_mode'
 ];
 
 var BOOL_FIELDS = [
@@ -61,13 +62,9 @@ var callQueryTest = rpc.declare({
 	params: [ 'name', 'type' ], expect: {}
 });
 
-var callRecommendedConfig = rpc.declare({
-	object: 'luci.oxidnsplus', method: 'recommended_config', expect: {}
-});
-
-var callApplyTuning = rpc.declare({
-	object: 'luci.oxidnsplus', method: 'apply_config_tuning',
-	params: [ 'confirm', 'reload' ], expect: {}
+var callRestoreDefaults = rpc.declare({
+	object: 'luci.oxidnsplus', method: 'restore_defaults',
+	params: [ 'confirm' ], expect: {}
 });
 
 function el(id) {
@@ -238,7 +235,6 @@ return view.extend({
 		var st = data[1] || {};
 		var list = data[2] || {};
 		var svc = st.service || {};
-		var cfg = st.config || {};
 		var warmState = st.warm || {};
 		var dhcpState = st.dhcp || {};
 
@@ -251,22 +247,29 @@ return view.extend({
 			statusRow(_('Cron block installed'), svc.cron_installed, !!svc.cron_installed),
 			statusRow(_('OxiDNS core running'), svc.core_running, !!svc.core_running),
 			statusRow(_('Helper scripts executable'), svc.scripts_ok, !!svc.scripts_ok),
-			configRow(_('Last warming'), (warmState.last_run || '-') + '  (' +
-				(warmState.domains || '0') + ' domains, ' +
-				(warmState.queries_ok || '0') + ' ok / ' +
-				(warmState.queries_failed || '0') + ' failed)'),
+			configRow(_('Cache keeper'), (warmState.mode || 'ttl') + ' / poll ' +
+				(warmState.poll_seconds || '60') + 's'),
+			configRow(_('Last warming'),
+				'total=' + (warmState.total || '0') +
+				' due=' + (warmState.due || '0') +
+				' skipped=' + (warmState.skipped || '0') +
+				' ok=' + (warmState.queries_ok || '0') +
+				' failed=' + (warmState.queries_failed || '0') +
+				' rebuilt=' + (warmState.rebuilt || '0') +
+				' @ ' + (warmState.last_run || '-')),
 			configRow(_('Last DHCP sync'), (dhcpState.last_run || '-') + '  (' +
 				(dhcpState.leases || '0') + ' leases, reload=' +
-				(dhcpState.reload || '-') + ')'),
-			configRow(_('lazy_cache_ttl'), cfg.lazy_cache_ttl),
-			configRow(_('ECS handling'), cfg.ecs === 'stripped' ? 'stripped (recommended)' : cfg.ecs),
-			configRow(_('dhcp-hosts referenced'), cfg.dhcp_hosts_referenced ? _('Yes') : _('No')),
-			configRow(_('guest branch'), cfg.guest_detected ? 'detected' : 'none')
+				(dhcpState.reload || '-') + ')')
 		];
 
 		var warmRows = [
 			row(_('Enable warming'), checkInput(settingId('warm_enabled'), setting('warm_enabled', '1'))),
-			row(_('Interval (minutes)'), textInput(settingId('warm_interval'), setting('warm_interval', '2'))),
+			row(_('Poll interval (minutes)'), textInput(settingId('warm_interval'), setting('warm_interval', '1')),
+				_('Scheduler granularity only; actual refreshes follow each answer TTL.')),
+			row(_('Refresh margin (%)'), textInput(settingId('warm_margin_percent'), setting('warm_margin_percent', '20')),
+				_('Refresh when this percent of TTL remains. 20 = refresh at 80% of TTL.')),
+			row(_('Min refresh TTL (s)'), textInput(settingId('warm_min_ttl'), setting('warm_min_ttl', '30'))),
+			row(_('Max refresh TTL (s)'), textInput(settingId('warm_max_ttl'), setting('warm_max_ttl', '3600'))),
 			row(_('Record types'), selectInput(settingId('warm_types'), [
 				[ 'A AAAA', 'A + AAAA' ], [ 'A', 'A only' ], [ 'AAAA', 'AAAA only' ]
 			], setting('warm_types', 'A AAAA'))),
@@ -274,28 +277,30 @@ return view.extend({
 			row(_('Wait for core (seconds)'), textInput(settingId('warm_wait_ready'), setting('warm_wait_ready', '15'))),
 			row(_('Warm list path'), textInput(settingId('warm_list'), setting('warm_list', '/etc/oxidns/warm.list'))),
 			row(_('Local resolver'), textInput(settingId('resolver'), setting('resolver', '127.0.0.1'))),
-			row(_('Resolver port'), textInput(settingId('resolver_port'), setting('resolver_port', '5333'))),
-			row('dig timeout / tries (s)', textInput(settingId('dig_timeout'), setting('dig_timeout', '1'))),
+			row(_('Resolver port'), textInput(settingId('resolver_port'), setting('resolver_port', '5333')))
+		];
+
+		var advancedRows = [
+			row('dig timeout (s)', textInput(settingId('dig_timeout'), setting('dig_timeout', '1'))),
 			row('dig tries', textInput(settingId('dig_tries'), setting('dig_tries', '1'))),
-			row('Sleep between queries (s)', textInput(settingId('sleep_between'), setting('sleep_between', '0')))
+			row('Sleep between queries (s)', textInput(settingId('sleep_between'), setting('sleep_between', '0'))),
+			row(_('No-answer TTL (s)'), textInput(settingId('warm_noanswer_ttl'), setting('warm_noanswer_ttl', '300')),
+				_('Used for NODATA / NXDOMAIN / blocked answers with no TTL to read.')),
+			row(_('Retry TTL (s)'), textInput(settingId('warm_retry_ttl'), setting('warm_retry_ttl', '30')),
+				_('Backoff after a failed query.')),
+			row(_('Hosts output'), textInput(settingId('hosts_output'), setting('hosts_output', '/etc/oxidns/dhcp-hosts')))
 		];
 
 		var dhcpRows = [
 			row(_('Enable DHCP sync'), checkInput(settingId('dhcp_enabled'), setting('dhcp_enabled', '0')),
-				_('Reload OxiDNS after DHCP sync')),
+				_('Requires /etc/oxidns/dhcp-hosts in hosts_system.files of your own config.yaml.')),
 			row(_('DHCP interval (minutes)'), textInput(settingId('dhcp_interval'), setting('dhcp_interval', '10'))),
 			row(_('Lease file'), textInput(settingId('lease_file'), setting('lease_file', '/tmp/dhcp.leases'))),
 			row(_('Local domain suffix'), textInput(settingId('lease_domain'), setting('lease_domain', 'lan'))),
-			row(_('Hosts output'), textInput(settingId('hosts_output'), setting('hosts_output', '/etc/oxidns/dhcp-hosts'))),
 			row(_('Auto reload on change'), checkInput(settingId('dhcp_auto_reload'), setting('dhcp_auto_reload', '0'))),
 			row(_('Reload mode'), selectInput(settingId('reload_mode'), [
 				[ 'signal', 'signal (gentle)' ], [ 'restart', 'restart (always effective)' ]
 			], setting('reload_mode', 'signal')))
-		];
-
-		var advancedRows = [
-			row(_('Config path'), textInput(settingId('config_path'), setting('config_path', '/etc/oxidns/config.yaml'))),
-			row(_('Working directory'), textInput(settingId('working_dir'), setting('working_dir', '/var/lib/oxidns')))
 		];
 
 		var actions = E('div', { 'class': 'cbi-section' }, [
@@ -308,16 +313,13 @@ return view.extend({
 				E('input', { 'id': 'oxidnsplus-dhcp-reload', 'type': 'checkbox', 'style': 'margin:0 .4em 0 1em' }),
 				E('span', {}, 'reload'),
 				actionButton(_('Run diagnostics'), function() { return runAction(callDiagnose(), 'diagnose'); }),
-				actionButton(_('Recommended config'), function() {
-					return runAction(callRecommendedConfig(), 'recommended config');
-				}),
-				actionButton(_('Config tuning'), function() {
-					if (!window.confirm(_('Confirm config tuning') + '\n\n' +
-							_('This changes only lazy_cache_ttl in the existing config and validates with oxidns check. Continue?'))) {
+				actionButton(_('Restore defaults'), function() {
+					if (!window.confirm(_('Confirm restore defaults') + '\n\n' +
+							_('Reset Plus settings and warm list, clear runtime state? Your /etc/oxidns/config.yaml is not touched.'))) {
 						return Promise.resolve();
 					}
-					return runAction(callApplyTuning(1, 1), 'config tuning');
-				}, true)
+					return runAction(callRestoreDefaults(1), 'restore defaults');
+				})
 			]),
 			E('div', { 'style': 'margin-top:.8em' }, [
 				E('input', {
@@ -361,11 +363,11 @@ return view.extend({
 		return E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, _('OxiDNS Plus')),
 			E('div', { 'class': 'cbi-map-descr' },
-				_('Cache warming, DHCP hostnames, upstream diagnostics and guarded config tuning for an existing OxiDNS runtime.')),
+				_('TTL-aware cache warming, DHCP hostnames and upstream diagnostics for an existing OxiDNS runtime. This package never edits your OxiDNS configuration.')),
 			section(_('Runtime status'), statusRows),
 			section(_('Cache warming'), warmRows),
 			section(_('DHCP hostnames'), dhcpRows),
-			section(_('Advanced paths'), advancedRows),
+			section(_('Advanced'), advancedRows),
 			E('div', { 'class': 'cbi-button-row' }, [
 				actionButton(_('Save Settings'), function() { return saveSettings(); }, true)
 			]),

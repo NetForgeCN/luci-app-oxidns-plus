@@ -48,34 +48,75 @@ else
 	printf '  SKIP node not available\n'
 fi
 
-printf '== YAML sanity ==\n'
+printf '== hard rule: no main-config access ==\n'
 python3 - "$ROOT" <<'PY'
-import os, re, sys
+import os, sys
 root = sys.argv[1]
-p = os.path.join(root, 'root/usr/share/oxidnsplus/config.recommended.yaml')
-text = open(p, encoding='utf-8').read()
 bad = False
-if '\t' in text:
-    print('  FAIL recommended config contains tab characters'); bad = True
-for key in ('runtime:', 'log:', 'api:', 'network:', 'plugins:'):
-    if not re.search(r'^' + re.escape(key) + r'\s*$', text, re.M):
-        print('  FAIL missing top-level key ' + key); bad = True
-for tag in ('cache_main', 'edns_strip', 'hosts_system', 'seq_main', 'udp_lan'):
-    if 'tag: ' + tag not in text:
-        print('  FAIL missing plugin tag ' + tag); bad = True
-if 'lazy_cache_ttl: 3600' not in text:
-    print('  FAIL P1 not applied (lazy_cache_ttl != 3600)'); bad = True
-if re.search(r'^\s*serve_stale_client_timeout_ms:', text, re.M):
-    print('  FAIL F1 field is active but the official binary does not know it'); bad = True
-if 'ecs_handler' in text and 'type: ecs_handler' in text:
-    print('  FAIL ECS injection plugin present'); bad = True
-if '/etc/oxidns/dhcp-hosts' not in text:
-    print('  FAIL S2 hosts file not referenced'); bad = True
+code_files = [
+    'root/usr/libexec/rpcd/luci.oxidnsplus',
+    'root/usr/libexec/oxidnsplus-warm.sh',
+    'root/usr/libexec/oxidnsplus-dhcp-hosts.sh',
+    'root/usr/libexec/oxidnsplus-diagnose.sh',
+    'root/etc/init.d/oxidnsplus',
+    'root/etc/config/oxidnsplus',
+    'htdocs/luci-static/resources/view/oxidnsplus/plus.js',
+]
+forbidden = ['apply_config_tuning', 'recommended_config', 'config_path',
+             'config.recommended.yaml', 'lazy_cache_ttl', 'oxidns check -c']
+for rel in code_files:
+    text = open(os.path.join(root, rel), encoding='utf-8').read()
+    for word in forbidden:
+        if word in text:
+            print('  FAIL %s still references %s' % (rel, word)); bad = True
+if os.path.isfile(os.path.join(root, 'root/usr/share/oxidnsplus/config.recommended.yaml')):
+    print('  FAIL config.recommended.yaml still shipped'); bad = True
+# diagnose.sh in particular must not read the main config at all
+diag = open(os.path.join(root, 'root/usr/libexec/oxidnsplus-diagnose.sh'), encoding='utf-8').read()
+if 'config.yaml' in diag.replace('never reads /etc/oxidns/config.yaml', '') \
+                       .replace('Edit /etc/oxidns/config.yaml yourself', ''):
+    print('  FAIL diagnose.sh still reads config.yaml'); bad = True
 if not bad:
-    print('  OK   recommended config sanity')
+    print('  OK   package never reads/writes /etc/oxidns/config.yaml')
 sys.exit(1 if bad else 0)
 PY
 [ $? -eq 0 ] || FAIL=$((FAIL + 1))
+
+printf '== automated rollback ==\n'
+python3 - "$ROOT" <<'PY'
+import os, sys
+root = sys.argv[1]
+bad = False
+mk = open(os.path.join(root, 'Makefile'), encoding='utf-8').read()
+init = open(os.path.join(root, 'root/etc/init.d/oxidnsplus'), encoding='utf-8').read()
+for needle, where in [
+    ('define Package/luci-app-oxidns-plus/prerm', 'Makefile prerm'),
+    ('define Package/luci-app-oxidns-plus/postrm', 'Makefile postrm'),
+    ('sysupgrade.conf.oxidnsplus.tmp', 'prerm sysupgrade cleanup'),
+    ('/etc/init.d/oxidnsplus cleanup', 'prerm cleanup call'),
+]:
+    if needle not in mk:
+        print('  FAIL missing ' + where); bad = True
+for needle in ['cleanup()', 'EXTRA_COMMANDS="warm sync cleanup"', 'HOSTS_STUB']:
+    if needle not in init:
+        print('  FAIL init.d missing ' + needle); bad = True
+if not bad:
+    print('  OK   prerm / postrm / cleanup present')
+sys.exit(1 if bad else 0)
+PY
+[ $? -eq 0 ] || FAIL=$((FAIL + 1))
+
+printf '== defaults copies ==\n'
+if cmp -s "$ROOT/root/etc/config/oxidnsplus" "$ROOT/root/usr/share/oxidnsplus/uci.defaults"; then
+	ok "uci.defaults matches default UCI"
+else
+	bad "uci.defaults differs from default UCI"
+fi
+if cmp -s "$ROOT/root/etc/oxidns/warm.list" "$ROOT/root/usr/share/oxidnsplus/warm.list.defaults"; then
+	ok "warm.list.defaults matches warm.list"
+else
+	bad "warm.list.defaults differs from warm.list"
+fi
 
 printf '== cross-file consistency ==\n'
 python3 - "$ROOT" <<'PY'
@@ -96,8 +137,8 @@ menu = json.loads(read('root/usr/share/luci/menu.d/luci-app-oxidns-plus.json'))
 uci = read('root/etc/config/oxidnsplus')
 js = read('htdocs/luci-static/resources/view/oxidnsplus/plus.js')
 mk = read('Makefile')
+po = read('po/zh_Hans/oxidnsplus.po')
 
-# required files
 required = [
     'LICENSE', 'README.md', 'AGENTS.md', 'Makefile', '.gitignore',
     'root/etc/config/oxidnsplus',
@@ -109,7 +150,8 @@ required = [
     'root/usr/libexec/oxidnsplus-diagnose.sh',
     'root/usr/share/rpcd/acl.d/luci-app-oxidns-plus.json',
     'root/usr/share/luci/menu.d/luci-app-oxidns-plus.json',
-    'root/usr/share/oxidnsplus/config.recommended.yaml',
+    'root/usr/share/oxidnsplus/uci.defaults',
+    'root/usr/share/oxidnsplus/warm.list.defaults',
     'htdocs/luci-static/resources/view/oxidnsplus/plus.js',
     'po/zh_Hans/oxidnsplus.po',
     'docs/FEATURES.md', 'docs/CONFIGURATION.md', 'docs/ROADMAP.md',
@@ -122,8 +164,6 @@ if not fail:
 
 # rpcd list / call / ACL method sets
 m = re.search(r'\tlist\)\n(.*?)\n\t\t;;', rpcd, re.S)
-# Only the first "name": on each printf line is a method. Parameter names
-# appear later on the same line and must not be counted as methods.
 list_methods = set(re.findall(r"printf '\"([a-z_]+)\"\s*:", m.group(1))) if m else set()
 m = re.search(r'\tcall\)\n(.*?)\n\t\t;;', rpcd, re.S)
 call_methods = set(re.findall(r'^\s+([a-z_]+)\)\s+emit_', m.group(1), re.M)) if m else set()
@@ -154,6 +194,19 @@ else:
         sorted(rpcd_fields - uci_opts - js_fields),
         sorted(js_fields - uci_opts - rpcd_fields)))
 
+# settings_save signature must list exactly FIELDS
+m = re.search(r'"settings_save":\{(.*?)\}', rpcd, re.S)
+sig = set(re.findall(r'"([a-z_]+)":"string"', m.group(1))) if m else set()
+if sig != uci_opts:
+    bad('settings_save signature mismatch: %s' % sorted(sig ^ uci_opts))
+
+# every UI _('...') string has a translation
+used = set(re.findall(r"_\('([^']+)'\)", js))
+known = set(re.findall(r'^msgid "(.*)"$', po, re.M))
+missing = sorted(used - known)
+if missing:
+    bad('untranslated strings: %s' % missing)
+
 # menu / ACL / view path / package name
 acl_group = 'luci-app-oxidns-plus'
 for node, spec in menu.items():
@@ -177,7 +230,7 @@ for rel, patterns in {
             bad('base-app namespace leak in ' + rel)
 
 if not fail:
-    print('  OK   menu / ACL / view / package namespace')
+    print('  OK   menu / ACL / view / i18n / namespace')
 sys.exit(1 if fail else 0)
 PY
 [ $? -eq 0 ] || FAIL=$((FAIL + 1))

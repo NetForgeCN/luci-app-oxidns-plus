@@ -3,6 +3,9 @@
 #
 # rpcd backend for luci-app-oxidns-plus.
 # Every privileged action lives here; the LuCI page only calls these methods.
+#
+# HARD RULE: this backend NEVER reads or writes /etc/oxidns/config.yaml.
+# Main-config tuning was removed in 0.2.0 - users edit their own config file.
 
 set -u
 
@@ -16,8 +19,10 @@ DHCP_SH="/usr/libexec/oxidnsplus-dhcp-hosts.sh"
 DIAG_SH="/usr/libexec/oxidnsplus-diagnose.sh"
 WARM_STATE="/tmp/oxidnsplus-warm.state"
 DHCP_STATE="/tmp/oxidnsplus-dhcp.state"
-RECOMMENDED="/usr/share/oxidnsplus/config.recommended.yaml"
+UCI_DEFAULTS="/usr/share/oxidnsplus/uci.defaults"
+LIST_DEFAULTS="/usr/share/oxidnsplus/warm.list.defaults"
 TMP_ROOT="${TMPDIR:-/tmp}"
+VERSION="0.2.0"
 
 # ---------------------------------------------------------------- JSON helpers
 
@@ -82,6 +87,12 @@ input_has_key() {
 input_bool_field() {
 	V="$(input_value "$1" "$2")"
 	case "$V" in
+		1|true|yes|on) printf '1'; return 0 ;;
+	esac
+	# jsonfilter is optional in the field; without it input_value only matches
+	# quoted strings. Also accept unquoted JSON scalars (true / 1).
+	V="$(printf '%s' "$2" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\([A-Za-z0-9_]*\).*/\1/p" | sed -n '1p')"
+	case "$V" in
 		1|true|yes|on) printf '1' ;;
 		*) printf '0' ;;
 	esac
@@ -142,36 +153,6 @@ valid_single_line() {
 
 # ---------------------------------------------------------------- status
 
-emit_config_health() {
-	CFG="$(uci_get config_path '/etc/oxidns/config.yaml')"
-	LAZY="unset"
-	ECS="unknown"
-	HOSTS_REF=0
-	GUEST=0
-	if [ -r "$CFG" ]; then
-		LAZY="$(awk '/^[[:space:]]*lazy_cache_ttl:/ { v = $2; gsub(/[^0-9]/, "", v); print v; exit }' "$CFG")"
-		[ -n "$LAZY" ] || LAZY="unset"
-		if grep -qE 'ecs_handler|client_ip_from_ecs' "$CFG"; then
-			ECS="injection"
-		elif grep -q 'edns_filter' "$CFG"; then
-			ECS="stripped"
-		fi
-		if grep -q '/etc/oxidns/dhcp-hosts' "$CFG"; then HOSTS_REF=1; fi
-		if grep -qE 'client_ip|guest' "$CFG"; then GUEST=1; fi
-	fi
-	printf '"config":{"path":'
-	json_string "$CFG"
-	printf ',"lazy_cache_ttl":'
-	json_string "$LAZY"
-	printf ',"ecs":'
-	json_string "$ECS"
-	printf ',"dhcp_hosts_referenced":'
-	json_bool "$HOSTS_REF"
-	printf ',"guest_detected":'
-	json_bool "$GUEST"
-	printf '}'
-}
-
 emit_status() {
 	ENABLED=0
 	CRON=0
@@ -184,7 +165,8 @@ emit_status() {
 		[ -x "$f" ] || SCRIPTS=0
 	done
 
-	printf '{"ok":true,"version":"0.1.0"'
+	printf '{"ok":true,"version":'
+	json_string "$VERSION"
 	printf ',"service":{"enabled":'
 	json_bool "$ENABLED"
 	printf ',"cron_installed":'
@@ -196,12 +178,22 @@ emit_status() {
 	printf '}'
 	printf ',"warm":{"last_run":'
 	json_string "$(state_get "$WARM_STATE" last_run '-')"
-	printf ',"domains":'
-	json_string "$(state_get "$WARM_STATE" domains '0')"
+	printf ',"mode":'
+	json_string "$(state_get "$WARM_STATE" mode 'ttl')"
+	printf ',"poll_seconds":'
+	json_string "$(state_get "$WARM_STATE" poll_seconds '60')"
+	printf ',"total":'
+	json_string "$(state_get "$WARM_STATE" total '0')"
+	printf ',"due":'
+	json_string "$(state_get "$WARM_STATE" due '0')"
+	printf ',"skipped":'
+	json_string "$(state_get "$WARM_STATE" skipped '0')"
 	printf ',"queries_ok":'
 	json_string "$(state_get "$WARM_STATE" queries_ok '0')"
 	printf ',"queries_failed":'
 	json_string "$(state_get "$WARM_STATE" queries_failed '0')"
+	printf ',"rebuilt":'
+	json_string "$(state_get "$WARM_STATE" rebuilt '0')"
 	printf ',"note":'
 	json_string "$(state_get "$WARM_STATE" note '-')"
 	printf '}'
@@ -213,14 +205,12 @@ emit_status() {
 	json_string "$(state_get "$DHCP_STATE" changed '0')"
 	printf ',"reload":'
 	json_string "$(state_get "$DHCP_STATE" reload '-')"
-	printf '},'
-	emit_config_health
-	printf '}\n'
+	printf '}}\n'
 }
 
 # ---------------------------------------------------------------- settings
 
-FIELDS="warm_enabled warm_interval warm_types warm_list warm_on_boot warm_wait_ready resolver resolver_port dig_timeout dig_tries sleep_between dhcp_enabled dhcp_interval lease_file lease_domain hosts_output dhcp_auto_reload reload_mode config_path working_dir"
+FIELDS="warm_enabled warm_interval warm_types warm_list warm_on_boot warm_wait_ready warm_margin_percent warm_min_ttl warm_max_ttl warm_noanswer_ttl warm_retry_ttl resolver resolver_port dig_timeout dig_tries sleep_between dhcp_enabled dhcp_interval lease_file lease_domain hosts_output dhcp_auto_reload reload_mode"
 
 emit_settings_read() {
 	printf '{"ok":true'
@@ -238,7 +228,6 @@ emit_settings_save() {
 		return 1
 	fi
 
-	# Validate every provided value before writing anything.
 	for f in $FIELDS; do
 		input_has_key "$f" "$INPUT" || continue
 		V="$(input_value "$f" "$INPUT")"
@@ -247,8 +236,15 @@ emit_settings_save() {
 			warm_enabled|warm_on_boot|dhcp_enabled|dhcp_auto_reload)
 				valid_bool_value "$V" || { json_error "invalid_bool" "$f must be 0 or 1"; return 1; }
 				;;
-			warm_interval|warm_wait_ready|resolver_port|dig_timeout|dig_tries|dhcp_interval)
+			warm_interval|warm_wait_ready|warm_min_ttl|warm_max_ttl|warm_noanswer_ttl|warm_retry_ttl|resolver_port|dig_timeout|dig_tries|dhcp_interval)
 				valid_uint "$V" || { json_error "invalid_number" "$f must be a non-negative integer"; return 1; }
+				;;
+			warm_margin_percent)
+				valid_uint "$V" || { json_error "invalid_number" "$f must be a non-negative integer"; return 1; }
+				if [ "$V" -gt 90 ] 2>/dev/null; then
+					json_error "invalid_percent" "warm_margin_percent must be <= 90"
+					return 1
+				fi
 				;;
 			sleep_between)
 				case "$V" in ''|*[!0-9.]*) json_error "invalid_number" "$f must be numeric"; return 1 ;; esac
@@ -259,7 +255,7 @@ emit_settings_save() {
 			reload_mode)
 				case "$V" in signal|restart) ;; *) json_error "invalid_mode" "reload_mode must be signal or restart"; return 1 ;; esac
 				;;
-			warm_list|lease_file|hosts_output|config_path|working_dir)
+			warm_list|lease_file|hosts_output)
 				valid_abspath "$V" || { json_error "invalid_path" "$f must be an absolute path without .."; return 1; }
 				;;
 			lease_domain)
@@ -271,14 +267,15 @@ emit_settings_save() {
 		esac
 	done
 
-	# Hardening: the warm list may only be written inside /etc/oxidns.
-	NEW_LIST="$(input_value warm_list "$INPUT")"
-	if [ -n "$NEW_LIST" ]; then
-		case "$NEW_LIST" in
+	# Hardening: files we write must stay inside /etc/oxidns.
+	for f in warm_list hosts_output; do
+		V="$(input_value "$f" "$INPUT")"
+		[ -z "$V" ] && continue
+		case "$V" in
 			/etc/oxidns/*) ;;
-			*) json_error "invalid_warm_list" "warm_list must be under /etc/oxidns/"; return 1 ;;
+			*) json_error "invalid_path" "$f must be under /etc/oxidns/"; return 1 ;;
 		esac
-	fi
+	done
 
 	uci -q set "$UCI_PKG.$UCI_SECTION=main" 2>/dev/null || true
 	for f in $FIELDS; do
@@ -291,7 +288,6 @@ emit_settings_save() {
 	done
 	uci -q commit "$UCI_PKG" || { json_error "uci_commit_failed" "failed to commit UCI"; return 1; }
 
-	# Reinstall the cron block so interval changes take effect immediately.
 	if [ -x "$INIT" ]; then
 		"$INIT" restart >/dev/null 2>&1 || true
 	fi
@@ -321,7 +317,7 @@ run_script_json() {
 
 emit_warm_now() {
 	[ -x "$WARM_SH" ] || { json_error "script_missing" "warmer is not executable"; return 1; }
-	run_script_json warm "$WARM_SH"
+	run_script_json warm "$WARM_SH" --force
 }
 
 emit_dhcp_now() {
@@ -404,99 +400,45 @@ emit_warm_list_save() {
 		return 1
 	fi
 	chmod 644 "$LIST" 2>/dev/null || true
+	# The list changed: drop the TTL baseline so the next pass re-evaluates it.
+	rm -f /tmp/oxidnsplus-warm.entries
 	printf '{"ok":true,"path":'
 	json_string "$LIST"
 	printf ',"lines":"%s"}\n' "$LINES"
 }
 
-emit_recommended_config() {
-	if [ ! -r "$RECOMMENDED" ]; then
-		json_error "template_missing" "recommended config template not found"
-		return 1
-	fi
-	printf '{"ok":true,"path":'
-	json_string "$RECOMMENDED"
-	printf ',"content":'
-	json_file_string "$RECOMMENDED"
-	printf '}\n'
-}
-
-emit_apply_config_tuning() {
+emit_restore_defaults() {
 	INPUT="$(cat)"
 	[ "$(input_bool_field confirm "$INPUT")" = "1" ] || {
 		json_error "not_confirmed" "confirm=1 is required"
 		return 1
 	}
-	CFG="$(uci_get config_path '/etc/oxidns/config.yaml')"
-	WORKDIR="$(uci_get working_dir '/var/lib/oxidns')"
-	BIN="/usr/bin/oxidns"
-	[ -r "$CFG" ] || { json_error "config_missing" "config file not found"; return 1; }
-	[ -x "$BIN" ] || { json_error "core_missing" "oxidns binary not found"; return 1; }
+	[ -r "$UCI_DEFAULTS" ] || { json_error "defaults_missing" "uci.defaults not found"; return 1; }
 
-	CURRENT="$(awk '/^[[:space:]]*lazy_cache_ttl:/ { v = $2; gsub(/[^0-9]/, "", v); print v; exit }' "$CFG")"
-	if [ -z "$CURRENT" ]; then
-		printf '{"ok":true,"changed":false,"message":'
-		json_string "lazy_cache_ttl not found; nothing changed. Add it to the cache plugin manually."
-		printf '}\n'
-		return 0
-	fi
-	if [ "$CURRENT" = "3600" ]; then
-		printf '{"ok":true,"changed":false,"message":'
-		json_string "lazy_cache_ttl is already 3600."
-		printf '}\n'
-		return 0
-	fi
-
-	BACKUP_DIR="$WORKDIR/config-backups"
-	mkdir -p "$BACKUP_DIR" 2>/dev/null || { json_error "backup_failed" "cannot create backup dir"; return 1; }
-	BACKUP="$BACKUP_DIR/config.yaml.$(date '+%Y%m%d%H%M%S' 2>/dev/null || printf 'backup')"
-	cp "$CFG" "$BACKUP" 2>/dev/null || { json_error "backup_failed" "cannot back up config"; return 1; }
-
-	TMP="$(mktemp "$TMP_ROOT/oxidnsplus-config.XXXXXX")"
-	awk '
-		/^[[:space:]]*lazy_cache_ttl:/ {
-			sub(/lazy_cache_ttl:.*/, "lazy_cache_ttl: 3600")
-			found = 1
-		}
-		{ print }
-	' "$CFG" > "$TMP" || { rm -f "$TMP"; json_error "patch_failed" "cannot generate patched config"; return 1; }
-
-	CHECK_OUT="$(mktemp "$TMP_ROOT/oxidnsplus-check.XXXXXX")"
-	if ! "$BIN" check -c "$TMP" -d "$WORKDIR" >"$CHECK_OUT" 2>&1; then
-		DETAIL="$(head -c 500 "$CHECK_OUT")"
-		rm -f "$TMP" "$CHECK_OUT"
-		printf '{"ok":false,"code":"validation_failed","message":'
-		json_string "patched config failed oxidns check; original file kept. $DETAIL"
-		printf ',"backup":'
-		json_string "$BACKUP"
-		printf '}\n'
+	UCI_FILE="/etc/config/$UCI_PKG"
+	if ! cp "$UCI_DEFAULTS" "$UCI_FILE" 2>/dev/null; then
+		json_error "restore_failed" "cannot restore UCI defaults"
 		return 1
 	fi
-	rm -f "$CHECK_OUT"
+	chmod 644 "$UCI_FILE" 2>/dev/null || true
 
-	if ! mv "$TMP" "$CFG"; then
-		rm -f "$TMP"
-		json_error "write_failed" "cannot replace config; original kept"
-		return 1
-	fi
-
-	RELOAD_RESULT="not_requested"
-	if [ "$(input_bool_field reload "$INPUT")" = "1" ]; then
-		if [ -x /etc/init.d/oxidns ] && /etc/init.d/oxidns reload >/dev/null 2>&1; then
-			RELOAD_RESULT="signaled"
-		else
-			RELOAD_RESULT="failed"
+	RESTORED_LIST="no"
+	if [ -r "$LIST_DEFAULTS" ]; then
+		if cp "$LIST_DEFAULTS" /etc/oxidns/warm.list 2>/dev/null; then
+			chmod 644 /etc/oxidns/warm.list 2>/dev/null || true
+			RESTORED_LIST="yes"
 		fi
 	fi
 
-	printf '{"ok":true,"changed":true,"old_value":'
-	json_string "$CURRENT"
-	printf ',"new_value":"3600","backup":'
-	json_string "$BACKUP"
-	printf ',"reload":'
-	json_string "$RELOAD_RESULT"
+	if [ -x "$INIT" ]; then
+		"$INIT" cleanup >/dev/null 2>&1 || true
+		"$INIT" restart >/dev/null 2>&1 || true
+	fi
+
+	printf '{"ok":true,"uci_restored":"yes","warm_list_restored":'
+	json_string "$RESTORED_LIST"
 	printf ',"message":'
-	json_string "lazy_cache_ttl changed to 3600; validated with oxidns check."
+	json_string "Plus settings and warm list reset to package defaults; runtime state cleared. /etc/oxidns/config.yaml was NOT touched."
 	printf '}\n'
 }
 
@@ -507,15 +449,14 @@ case "${1:-}" in
 		printf '{'
 		printf '"status":{},'
 		printf '"settings_read":{},'
-		printf '"settings_save":{"warm_enabled":"string","warm_interval":"string","warm_types":"string","warm_list":"string","warm_on_boot":"string","warm_wait_ready":"string","resolver":"string","resolver_port":"string","dig_timeout":"string","dig_tries":"string","sleep_between":"string","dhcp_enabled":"string","dhcp_interval":"string","lease_file":"string","lease_domain":"string","hosts_output":"string","dhcp_auto_reload":"string","reload_mode":"string","config_path":"string","working_dir":"string"},'
+		printf '"settings_save":{"warm_enabled":"string","warm_interval":"string","warm_types":"string","warm_list":"string","warm_on_boot":"string","warm_wait_ready":"string","warm_margin_percent":"string","warm_min_ttl":"string","warm_max_ttl":"string","warm_noanswer_ttl":"string","warm_retry_ttl":"string","resolver":"string","resolver_port":"string","dig_timeout":"string","dig_tries":"string","sleep_between":"string","dhcp_enabled":"string","dhcp_interval":"string","lease_file":"string","lease_domain":"string","hosts_output":"string","dhcp_auto_reload":"string","reload_mode":"string"},'
 		printf '"warm_now":{},'
 		printf '"warm_list_read":{},'
 		printf '"warm_list_save":{"content":"string"},'
 		printf '"dhcp_now":{"reload":"boolean"},'
 		printf '"diagnose":{},'
 		printf '"query_test":{"name":"string","type":"string"},'
-		printf '"recommended_config":{},'
-		printf '"apply_config_tuning":{"confirm":"boolean","reload":"boolean"}'
+		printf '"restore_defaults":{"confirm":"boolean"}'
 		printf '}\n'
 		;;
 	call)
@@ -529,8 +470,7 @@ case "${1:-}" in
 			dhcp_now) emit_dhcp_now ;;
 			diagnose) emit_diagnose ;;
 			query_test) emit_query_test ;;
-			recommended_config) emit_recommended_config ;;
-			apply_config_tuning) emit_apply_config_tuning ;;
+			restore_defaults) emit_restore_defaults ;;
 			*) printf '{"ok":false,"error":"unknown method"}\n'; exit 1 ;;
 		esac
 		;;

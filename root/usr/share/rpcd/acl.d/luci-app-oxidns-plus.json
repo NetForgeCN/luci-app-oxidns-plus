@@ -8,8 +8,7 @@
 					"settings_read",
 					"warm_list_read",
 					"diagnose",
-					"query_test",
-					"recommended_config"
+					"query_test"
 				]
 			}
 		},
@@ -20,7 +19,7 @@
 					"warm_now",
 					"warm_list_save",
 					"dhcp_now",
-					"apply_config_tuning"
+					"restore_defaults"
 				]
 			}
 		}
