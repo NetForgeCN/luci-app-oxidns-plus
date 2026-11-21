@@ -114,8 +114,11 @@ endef
 
 # Copy the vendored Rust source into the build dir. No download, so Build/Prepare
 # is defined explicitly rather than relying on the default PKG_SOURCE unpack.
+# Create the full destination path: $(CP) is cp -fpR, which does not create
+# missing parent directories, and rust-package.mk has no Build/Prepare of its
+# own. MAKE_PATH points at $(PKG_BUILD_DIR)/src/prewarmer-rs for cargo install.
 define Build/Prepare
-	mkdir -p $(PKG_BUILD_DIR)
+	mkdir -p $(PKG_BUILD_DIR)/src/prewarmer-rs
 	$(CP) ./src/prewarmer-rs/. $(PKG_BUILD_DIR)/src/prewarmer-rs/
 endef
 
