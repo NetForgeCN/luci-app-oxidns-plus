@@ -23,7 +23,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-oxidns-plus
 PKG_VERSION:=0.3.0
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 
 PKG_LICENSE:=GPL-3.0-or-later
 PKG_LICENSE_FILES:=LICENSE
@@ -145,10 +145,17 @@ define Package/luci-app-oxidns-plus/install
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/view/oxidnsplus/plus.js $(1)/www/luci-static/resources/view/oxidnsplus/plus.js
 endef
 
-include $(TOPDIR)/feeds/luci/luci.mk
 # rust-package.mk overrides Build/Compile with Build/Compile/Cargo and defines
-# RUST_ARCH_DEPENDS / target triples. Include after luci.mk is fine: luci.mk
-# does not define Build/Compile.
+# the target triples / cross linker. It must be included BEFORE luci.mk so that
+# the package registered by luci.mk picks up the Cargo compile rule.
 include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk
 
-$(eval $(call BuildPackage,luci-app-oxidns-plus))
+# luci.mk sets LUCI_BUILD_PACKAGES := $(PKG_NAME) and, at its end, evaluates
+# BuildPackage for every entry. That is the ONE and ONLY registration point.
+# Do NOT add an explicit $(eval $(call BuildPackage,...)) here: it would
+# register the package a second time and make it appear twice in menuconfig.
+include $(TOPDIR)/feeds/luci/luci.mk
+
+# scan.mk discovers packages by grepping for "call BuildPackage"; a comment is
+# enough for discovery but is not evaluated, so registration stays single.
+# call BuildPackage - OpenWrt buildroot signature

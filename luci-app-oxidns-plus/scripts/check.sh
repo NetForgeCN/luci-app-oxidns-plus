@@ -142,8 +142,18 @@ for needle, label in [
 if 'LUCI_PKGARCH:=x86_64' in mk: bad('Makefile still pins x86_64')
 if '@(x86_64||aarch64||i386||arm)' not in mk:
     bad('architecture gate does not mirror oxidns-core')
+# menuconfig must show the package exactly ONCE. luci.mk already evaluates
+# BuildPackage at its end; a hand-written eval would register it a second time.
+if '$(eval $(call BuildPackage,luci-app-oxidns-plus))' in mk:
+    bad('Makefile has a manual BuildPackage eval (duplicate -> two menuconfig entries)')
+if '# call BuildPackage - OpenWrt buildroot signature' not in mk:
+    bad('Makefile missing scan.mk discovery signature comment')
+# rust-package.mk must come before luci.mk so luci.mk's BuildPackage eval
+# captures the Cargo Build/Compile rule.
+if mk.find('rust-package.mk') > mk.find('feeds/luci/luci.mk'):
+    bad('rust-package.mk must be included before luci.mk')
 if not fail:
-    print('  OK   source-build Makefile (rust-package.mk, arch gate, cargo output)')
+    print('  OK   source-build Makefile (rust-package.mk, arch gate, cargo output, single registration)')
 
 # HARD RULE: must not modify OxiDNS main config anywhere.
 for rel in ['root/etc/init.d/oxidnsplus','root/usr/libexec/rpcd/luci.oxidnsplus',
