@@ -1,0 +1,17 @@
+[package]
+name = "oxidns-prewarmer"
+version = "0.3.0"
+edition = "2021"
+publish = false
+
+# Zero external dependencies on purpose: the binary is cross-compiled to a
+# static musl target and shipped prebuilt in the OpenWrt package. Pulling in
+# serde/reqwest/tokio would enlarge the binary and add a supply-chain surface
+# for a ~200-line scheduler. Everything here uses only the Rust standard library.
+
+[profile.release]
+opt-level = "z"        # optimize for size
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

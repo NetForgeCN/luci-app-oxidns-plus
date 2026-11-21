@@ -14,8 +14,8 @@ STATUS_FILE=/tmp/oxidnsplus.status.json
 
 uci_get() { uci -q get "oxidnsplus.main.$1" 2>/dev/null; }
 
-# Every flag must get a concrete value: an empty string handed to Go's
-# flag.Int() is a parse error. Defaults here mirror src/prewarmer/main.go.
+# Every flag must get a concrete value: an empty numeric value would be a
+# parse error. Defaults here mirror src/prewarmer-rs/src/main.rs.
 g() { local v; v="$(uci_get "$1")"; [ -n "$v" ] && printf '%s' "$v" || printf '%s' "$2"; }
 
 # Read api.http.listen from config.yaml (read-only) to derive the API base.

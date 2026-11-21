@@ -2,8 +2,10 @@
 
 ## Scope
 
-A single static Go daemon + LuCI/rpcd/UCI. No changes to the OxiDNS core, no
-edits to `config.yaml`, no second cache implementation.
+A single static Rust daemon (x86_64-unknown-linux-musl) + LuCI/rpcd/UCI. No
+changes to the OxiDNS core, no edits to `config.yaml`, no second cache
+implementation. Zero external crates: JSON/HTTP/DNS are implemented with the
+standard library so the binary stays small and has no supply-chain surface.
 
 ## Lifecycle of one entry (stale-hit trigger)
 
@@ -63,8 +65,8 @@ no flush, no insert, no config write.
 
 ## Verification
 
-- `scripts/build.sh`: Go unit tests + 5-arch cross-compile.
-- `scripts/check.sh`: shell/JS/JSON syntax, Go tests, i18n completeness,
+- `scripts/build.sh`: Rust unit tests + x86_64 musl static build.
+- `scripts/check.sh`: shell/JS/JSON syntax, cargo tests, i18n completeness,
   rpcd list/call/ACL alignment, UCI/JS field alignment, hard-rule assertions.
 - End-to-end (development): real binary driven against a mock OxiDNS
   (HTTP API + UDP DNS listener) on a Linux host, verifying cold seed, stale

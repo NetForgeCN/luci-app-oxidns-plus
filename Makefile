@@ -4,10 +4,13 @@
 # Licensed under GPL-3.0-or-later. See /LICENSE.
 #
 # luci-app-oxidns-plus is an ADD-ON for an existing OxiDNS 1.7.x runtime.
-# It ships a single static Go binary (oxidns-prewarmer) that performs
+# It ships a single static Rust binary (oxidns-prewarmer, built from
+# src/prewarmer-rs against x86_64-unknown-linux-musl) that performs
 # TTL-adaptive stale-hit prewarming by talking to OxiDNS's own management API
 # and DNS listener. It does NOT ship or modify the OxiDNS core, and it never
 # reads or writes /etc/oxidns/config.yaml.
+#
+# Only x86_64 is supported: the prebuilt musl binary targets that architecture.
 #
 
 include $(TOPDIR)/rules.mk
@@ -21,29 +24,19 @@ PKG_LICENSE_FILES:=LICENSE
 PKG_MAINTAINER:=NetForgeCN
 
 LUCI_TITLE:=OxiDNS Plus - TTL-adaptive prewarming
-LUCI_DEPENDS:=+luci-base +rpcd +jsonfilter
+LUCI_DEPENDS:=+luci-base +rpcd +jsonfilter @x86_64
 
-# The package ships a prebuilt static binary, so it is arch-specific.
-LUCI_PKGARCH:=
+# The package ships a prebuilt static binary, so it is arch-specific and must
+# be rebuilt per target. Only x86_64 is supported.
+LUCI_PKGARCH:=x86_64
 
-# Select the prebuilt binary by target architecture. Binaries are built with
-# CGO_ENABLED=0 (fully static) from src/prewarmer via scripts/build.sh.
-PREWARMER_BIN:=prewarmer-amd64
-ifneq ($(findstring aarch64,$(CONFIG_ARCH)),)
-  PREWARMER_BIN:=prewarmer-arm64
-else ifneq ($(findstring arm_cortex,$(CONFIG_ARCH)),)
-  PREWARMER_BIN:=prewarmer-armv7
-else ifneq ($(findstring armv7,$(CONFIG_ARCH)),)
-  PREWARMER_BIN:=prewarmer-armv7
-else ifneq ($(findstring mipsel,$(CONFIG_ARCH)),)
-  PREWARMER_BIN:=prewarmer-mipsle
-else ifneq ($(findstring mips,$(CONFIG_ARCH)),)
-  PREWARMER_BIN:=prewarmer-mips
-endif
+# Single prebuilt binary: Rust, x86_64-unknown-linux-musl, fully static.
+# Rebuild with scripts/build.sh (needs a Rust toolchain + musl target).
+PREWARMER_BIN:=prewarmer-x86_64
 
 define Package/luci-app-oxidns-plus/description
   Adds a LuCI page, UCI settings, a procd-managed binary and an rpcd API on top
-  of an existing OxiDNS installation. A small static Go daemon reads the OxiDNS
+  of an existing OxiDNS installation. A small static Rust daemon reads the OxiDNS
   cache API for TTL truth, maintains one independent deadline per (domain,qtype)
   and fires a query at OxiDNS's own listener just after fresh expiry so the
   native lazy cache refreshes in the background. TTL changes are followed,

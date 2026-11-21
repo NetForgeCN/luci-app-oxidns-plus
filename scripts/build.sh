@@ -1,24 +1,30 @@
 #!/bin/sh
-# Build the prebuilt static binaries shipped in src/bin/.
-# Requires Go >= 1.21. Run from anywhere.
+# Build the prebuilt static binary shipped in src/bin/.
+# Requires Rust 1.83+ with the x86_64-unknown-linux-musl target, plus a C
+# compiler (gcc) for build scripts. Run from anywhere.
 set -e
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-SRC="$ROOT/src/prewarmer"
+SRC="$ROOT/src/prewarmer-rs"
 OUT="$ROOT/src/bin"
 mkdir -p "$OUT"
+
 cd "$SRC"
-export CGO_ENABLED=0
 
 echo "== unit tests =="
-go test ./...
+cargo test
 
-echo "== cross build =="
-GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o "$OUT/prewarmer-amd64" .
-GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o "$OUT/prewarmer-arm64" .
-GOOS=linux GOARCH=arm  GOARM=7 go build -trimpath -ldflags='-s -w' -o "$OUT/prewarmer-armv7" .
-GOOS=linux GOARCH=mips GOMIPS=softfloat go build -trimpath -ldflags='-s -w' -o "$OUT/prewarmer-mips" .
-GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build -trimpath -ldflags='-s -w' -o "$OUT/prewarmer-mipsle" .
+echo "== musl static build (x86_64) =="
+rustup target add x86_64-unknown-linux-musl 2>/dev/null || true
+cargo build --release --target x86_64-unknown-linux-musl
+cp target/x86_64-unknown-linux-musl/release/oxidns-prewarmer "$OUT/prewarmer-x86_64"
+chmod 755 "$OUT/prewarmer-x86_64"
 
-rm -f "$OUT"/*-go-tmp-umask 2>/dev/null || true
+echo "== verify static =="
+if ldd "$OUT/prewarmer-x86_64" 2>&1 | grep -q 'not a dynamic'; then
+    echo "OK: statically linked"
+else
+    echo "WARNING: binary may not be static" >&2
+fi
+
 echo "== done =="
 ls -lh "$OUT"

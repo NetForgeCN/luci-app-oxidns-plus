@@ -1,7 +1,7 @@
 #!/bin/sh
 # Copyright (C) 2026 NetForgeCN - GPL-3.0-or-later
 # Static validation for the repository. Runs on a workstation; no OpenWrt or
-# OxiDNS binary required. Optional: Go for unit tests, node for JS syntax.
+# OxiDNS binary required. Optional: Rust/cargo for unit tests, node for JS syntax.
 
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd) || exit 1
@@ -30,12 +30,12 @@ else
     printf '  SKIP node unavailable\n'
 fi
 
-printf '== Go unit tests ==\n'
-if command -v go >/dev/null 2>&1; then
-    ( cd "$ROOT/src/prewarmer" && CGO_ENABLED=0 go test ./... >/dev/null 2>&1 ) \
-        && ok "go test" || bad "go test"
+printf '== Rust unit tests ==\n'
+if command -v cargo >/dev/null 2>&1; then
+    ( cd "$ROOT/src/prewarmer-rs" && cargo test >/dev/null 2>&1 ) \
+        && ok "cargo test" || bad "cargo test"
 else
-    printf '  SKIP go unavailable\n'
+    printf '  SKIP cargo unavailable\n'
 fi
 
 printf '== defaults copies ==\n'
@@ -67,18 +67,19 @@ required = [
     'htdocs/luci-static/resources/view/oxidnsplus/plus.js',
     'po/zh_Hans/oxidnsplus.po',
     'scripts/build.sh','scripts/check.sh',
-    'src/prewarmer/main.go','src/prewarmer/scheduler.go','src/prewarmer/api.go',
-    'src/prewarmer/dns.go','src/prewarmer/types.go','src/prewarmer/go.mod',
+    'src/prewarmer-rs/Cargo.toml','src/prewarmer-rs/src/main.rs',
+    'src/prewarmer-rs/src/scheduler.rs','src/prewarmer-rs/src/api.rs',
+    'src/prewarmer-rs/src/json.rs','src/prewarmer-rs/src/dns.rs',
+    'src/prewarmer-rs/src/model.rs',
 ]
 for rel in required:
     if not os.path.isfile(os.path.join(root, rel)): bad('missing ' + rel)
 
-for a in ['amd64','arm64','armv7','mips','mipsle']:
-    p = os.path.join(root, 'src/bin', 'prewarmer-' + a)
-    if not os.path.isfile(p) or os.path.getsize(p) < 1000000:
-        bad('missing/invalid binary prewarmer-' + a)
+p = os.path.join(root, 'src/bin', 'prewarmer-x86_64')
+if not os.path.isfile(p) or os.path.getsize(p) < 100000:
+    bad('missing/invalid binary prewarmer-x86_64')
 if not fail:
-    print('  OK   required files + 5 binaries present')
+    print('  OK   required files + x86_64 binary present')
 
 rpcd = read('root/usr/libexec/rpcd/luci.oxidnsplus')
 acl = json.loads(read('root/usr/share/rpcd/acl.d/luci-app-oxidns-plus.json'))

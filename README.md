@@ -3,8 +3,9 @@
 TTL-adaptive prewarming add-on for [OxiDNS](https://oxidns.org) 1.7.x on OpenWrt.
 
 This package keeps the domains you care about warm without deleting cache or
-querying any upstream by itself. It ships one small **static Go binary**
-(`oxidns-prewarmer`) and a LuCI page. It never modifies `/etc/oxidns/config.yaml`.
+querying any upstream by itself. It ships one small **static Rust binary**
+(`oxidns-prewarmer`, ~590 KB, musl) and a LuCI page. It never modifies
+`/etc/oxidns/config.yaml`. **x86_64 only.**
 
 ## How it works
 
@@ -50,9 +51,10 @@ make menuconfig   # LuCI -> Applications -> luci-app-oxidns-plus
 make -j$(nproc)
 ```
 
-The package installs a prebuilt static binary chosen by target arch (amd64,
-arm64, armv7, mips, mipsle). To rebuild the binaries from source, run
-`scripts/build.sh` (needs Go >= 1.21).
+The package installs one prebuilt static binary for **x86_64** only. To rebuild
+it from source, run `scripts/build.sh` (needs Rust 1.83+ with the
+`x86_64-unknown-linux-musl` target and gcc). It is built fully static against
+musl, so it drops into any x86_64 OpenWrt image regardless of libc.
 
 **Runtime requirement:** OxiDNS 1.7.x already installed and running, with a
 DNS listener (default `127.0.0.1:5333`) and a management API. The add-on reads
@@ -89,12 +91,12 @@ Requirements for the OxiDNS side (in your v9 config): `cache.lazy_cache_ttl > 0`
 ## Layout
 
 ```
-src/prewarmer/   Go source (pure stdlib) + unit tests
-src/bin/         prebuilt static binaries per architecture
-root/            OpenWrt files (init, UCI, rpcd, menu, ACL, defaults)
-htdocs/          LuCI view
-po/              zh_Hans translations
-scripts/         build.sh (cross-compile + tests), check.sh (static validation)
+src/prewarmer-rs/  Rust source (pure stdlib, zero crates) + unit tests
+src/bin/           prebuilt static binary (prewarmer-x86_64)
+root/              OpenWrt files (init, UCI, rpcd, menu, ACL, defaults)
+htdocs/            LuCI view
+po/                zh_Hans translations
+scripts/           build.sh (musl build + tests), check.sh (static validation)
 ```
 
 ## Design notes
