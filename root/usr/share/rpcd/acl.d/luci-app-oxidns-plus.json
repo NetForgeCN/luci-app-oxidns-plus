@@ -7,8 +7,7 @@
 					"status",
 					"settings_read",
 					"warm_list_read",
-					"diagnose",
-					"query_test"
+					"log"
 				]
 			}
 		},
@@ -16,10 +15,7 @@
 			"ubus": {
 				"luci.oxidnsplus": [
 					"settings_save",
-					"warm_now",
-					"warm_list_save",
-					"dhcp_now",
-					"restore_defaults"
+					"warm_list_save"
 				]
 			}
 		}

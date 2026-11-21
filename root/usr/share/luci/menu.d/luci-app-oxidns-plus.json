@@ -10,7 +10,7 @@
 		}
 	},
 	"admin/services/oxidnsplus/plus": {
-		"title": "Warming and Diagnostics",
+		"title": "TTL-adaptive Prewarming",
 		"order": 10,
 		"action": {
 			"type": "view",

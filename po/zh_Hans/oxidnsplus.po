@@ -1,173 +1,166 @@
 msgid ""
 msgstr ""
-"Content-Type: text/plain; charset=UTF-8\n"
+"Project-Id-Version: luci-app-oxidns-plus 0.3.0\n"
 "Language: zh_Hans\n"
-"Plural-Forms: nplurals=1; plural=0;\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
 
-msgid "OxiDNS Plus"
-msgstr "OxiDNS 增强"
+msgid "OxiDNS Plus - TTL-adaptive Prewarming"
+msgstr "OxiDNS Plus - TTL 自适应预热"
 
-msgid "Warming and Diagnostics"
-msgstr "预热与诊断"
+msgid "Keeps your important domains warm by watching each cached TTL. Just after a fresh entry expires, a single query is sent to OxiDNS so its native lazy cache refreshes in the background. No cache is deleted, no upstream is queried by this add-on, and TTL changes are followed automatically."
+msgstr "通过监视每个缓存 TTL 让重要域名保持温热。当一条缓存刚过期时，本插件会向 OxiDNS 发送一次查询，由其原生惰性缓存在后台完成刷新。不删除任何缓存、不自行查询上游，并能自动跟随 TTL 变化。"
 
-msgid "TTL-aware cache warming, DHCP hostnames and upstream diagnostics for an existing OxiDNS runtime. This package never edits your OxiDNS configuration."
-msgstr "为已安装的 OxiDNS 提供按 TTL 感知的缓存预热、DHCP 主机名和上游诊断。本包不修改你的 OxiDNS 配置。"
+msgid "Live status"
+msgstr "实时状态"
 
-msgid "Runtime status"
-msgstr "运行状态"
+msgid "Refresh"
+msgstr "刷新"
 
-msgid "Service enabled"
-msgstr "服务已启用"
+msgid "Prewarmer status unavailable. Is the service running and enabled?"
+msgstr "无法获取预热器状态。服务是否已启用并正在运行？"
 
-msgid "Cron block installed"
-msgstr "已安装定时任务"
+msgid "Probes"
+msgstr "探测次数"
 
-msgid "OxiDNS core running"
-msgstr "OxiDNS 核心运行中"
+msgid "Refreshed"
+msgstr "刷新成功"
 
-msgid "Helper scripts executable"
-msgstr "辅助脚本可执行"
+msgid "Seeds"
+msgstr "冷启动填充"
 
-msgid "Cache keeper"
-msgstr "缓存维持模式"
+msgid "Failed"
+msgstr "失败"
 
-msgid "Last warming"
-msgstr "上次预热"
+msgid "Domains"
+msgstr "域名数"
 
-msgid "Last DHCP sync"
-msgstr "上次 DHCP 同步"
+msgid "Updated"
+msgstr "更新时间"
 
-msgid "Yes"
-msgstr "是"
+msgid "Domain"
+msgstr "域名"
 
-msgid "No"
-msgstr "否"
+msgid "Type"
+msgstr "类型"
 
-msgid "Cache warming"
-msgstr "缓存预热"
+msgid "TTL"
+msgstr "TTL"
 
-msgid "Enable warming"
-msgstr "启用预热"
+msgid "Remaining"
+msgstr "剩余"
 
-msgid "Poll interval (minutes)"
-msgstr "调度轮询间隔（分钟）"
+msgid "Next probe"
+msgstr "下次探测"
 
-msgid "Scheduler granularity only; actual refreshes follow each answer TTL."
-msgstr "仅决定调度粒度；实际刷新时机跟随每条应答的 TTL。"
+msgid "Source"
+msgstr "来源"
 
-msgid "Refresh margin (%)"
-msgstr "提前刷新比例（%）"
+msgid "Result"
+msgstr "结果"
 
-msgid "Refresh when this percent of TTL remains. 20 = refresh at 80% of TTL."
-msgstr "TTL 剩余该比例时刷新。20 表示在 TTL 用掉 80% 时刷新。"
+msgid "Watch list"
+msgstr "关注列表"
 
-msgid "Min refresh TTL (s)"
-msgstr "最小刷新间隔（秒）"
+msgid "Auto"
+msgstr "自动发现"
 
-msgid "Max refresh TTL (s)"
-msgstr "最大刷新间隔（秒）"
+msgid "Seeded"
+msgstr "已填充"
 
-msgid "Record types"
-msgstr "记录类型"
+msgid "TTL followed"
+msgstr "已跟随 TTL"
 
-msgid "Run once at boot"
-msgstr "开机立即预热一次"
+msgid "Retrying"
+msgstr "重试中"
 
-msgid "Wait for core (seconds)"
-msgstr "等待核心就绪（秒）"
+msgid "Short TTL fixed"
+msgstr "短 TTL 固定间隔"
 
-msgid "Warm list path"
-msgstr "预热清单路径"
+msgid "One \"domain [A|AAAA]\" per line. Only these are prewarmed in list mode. Use \"all\" mode to prewarm every cached domain instead."
+msgstr "每行一条“域名 [A|AAAA]”。列表模式下仅预热这些域名。改用“全部”模式可预热所有缓存域名。"
 
-msgid "Local resolver"
-msgstr "本地解析器"
+msgid "Save watch list"
+msgstr "保存关注列表"
 
-msgid "Resolver port"
-msgstr "解析端口"
+msgid "Watch list saved; prewarmer restarted."
+msgstr "关注列表已保存，预热器已重启。"
 
-msgid "Advanced"
-msgstr "高级选项"
+msgid "Settings"
+msgstr "设置"
 
-msgid "No-answer TTL (s)"
-msgstr "无应答 TTL（秒）"
+msgid "Enabled"
+msgstr "启用"
 
-msgid "Used for NODATA / NXDOMAIN / blocked answers with no TTL to read."
-msgstr "用于 NODATA / NXDOMAIN / 被拦截等读不到 TTL 的应答。"
+msgid "Mode"
+msgstr "模式"
 
-msgid "Retry TTL (s)"
-msgstr "失败重试间隔（秒）"
+msgid "Cache tag"
+msgstr "缓存标签"
 
-msgid "Backoff after a failed query."
-msgstr "查询失败后的退避时间。"
+msgid "DNS target"
+msgstr "DNS 目标"
 
-msgid "Hosts output"
-msgstr "hosts 输出路径"
+msgid "Watch list path"
+msgstr "关注列表路径"
 
-msgid "DHCP hostnames"
-msgstr "DHCP 主机名"
+msgid "Reconcile tick (s)"
+msgstr "对账周期（秒）"
 
-msgid "Enable DHCP sync"
-msgstr "启用 DHCP 同步"
+msgid "Grace after expiry (s)"
+msgstr "过期后宽限（秒）"
 
-msgid "Requires /etc/oxidns/dhcp-hosts in hosts_system.files of your own config.yaml."
-msgstr "需要你在自己的 config.yaml 的 hosts_system.files 中加入 /etc/oxidns/dhcp-hosts。"
+msgid "Refresh wait (ms)"
+msgstr "刷新等待（毫秒）"
 
-msgid "DHCP interval (minutes)"
-msgstr "DHCP 间隔（分钟）"
+msgid "Min TTL (s)"
+msgstr "最小 TTL（秒）"
 
-msgid "Lease file"
-msgstr "租约文件"
+msgid "Min interval (s)"
+msgstr "最小间隔（秒）"
 
-msgid "Local domain suffix"
-msgstr "本地域名后缀"
+msgid "Max interval (s)"
+msgstr "最大间隔（秒）"
 
-msgid "Auto reload on change"
-msgstr "变化时自动重载"
+msgid "Jitter (s)"
+msgstr "抖动（秒）"
 
-msgid "Reload mode"
-msgstr "重载方式"
+msgid "Retry base (s)"
+msgstr "重试基数（秒）"
 
-msgid "Save Settings"
+msgid "Retry max (s)"
+msgstr "重试上限（秒）"
+
+msgid "Retry max count"
+msgstr "重试次数上限"
+
+msgid "API base (override)"
+msgstr "API 地址（覆盖）"
+
+msgid "API user (override)"
+msgstr "API 用户（覆盖）"
+
+msgid "API password"
+msgstr "API 密码"
+
+msgid "OxiDNS config path"
+msgstr "OxiDNS 配置路径"
+
+msgid "Log level"
+msgstr "日志级别"
+
+msgid "Save settings"
 msgstr "保存设置"
 
-msgid "Actions"
-msgstr "操作"
+msgid "Settings saved; prewarmer restarted."
+msgstr "设置已保存，预热器已重启。"
 
-msgid "Warm now"
-msgstr "立即预热"
+msgid "Recent log"
+msgstr "最近日志"
 
-msgid "Sync DHCP now"
-msgstr "立即同步 DHCP"
+msgid "Loading log..."
+msgstr "正在加载日志..."
 
-msgid "Run diagnostics"
-msgstr "运行诊断"
-
-msgid "Restore defaults"
-msgstr "还原默认"
-
-msgid "Confirm restore defaults"
-msgstr "确认还原默认"
-
-msgid "Reset Plus settings and warm list, clear runtime state? Your /etc/oxidns/config.yaml is not touched."
-msgstr "将 Plus 设置与预热清单恢复为默认值并清空运行状态？不会改动你的 /etc/oxidns/config.yaml。"
-
-msgid "Query test"
-msgstr "查询测试"
-
-msgid "Output"
-msgstr "输出"
-
-msgid "Working..."
-msgstr "处理中…"
-
-msgid "Done."
-msgstr "完成。"
-
-msgid "Warm list"
-msgstr "预热清单"
-
-msgid "One domain per line. Blank lines and #comments are ignored."
-msgstr "每行一个域名，空行与 # 注释会被忽略。"
-
-msgid "Save Warm List"
-msgstr "保存预热清单"
+msgid "(no log entries)"
+msgstr "（无日志）"

@@ -1,462 +1,132 @@
 #!/bin/sh
 # Copyright (C) 2026 NetForgeCN - GPL-3.0-or-later
 #
-# rpcd backend for luci-app-oxidns-plus.
-# Every privileged action lives here; the LuCI page only calls these methods.
-#
-# HARD RULE: this backend NEVER reads or writes /etc/oxidns/config.yaml.
-# Main-config tuning was removed in 0.2.0 - users edit their own config file.
+# rpcd methods for the OxiDNS Plus LuCI page. All operations target this
+# add-on's own UCI package, watch list, status file and log. config.yaml is
+# never modified.
 
-set -u
+STATUS_FILE=/tmp/oxidnsplus.status.json
+WATCH_LIST="$(uci -q get oxidnsplus.main.watch_list 2>/dev/null)"
+[ -n "$WATCH_LIST" ] || WATCH_LIST=/etc/oxidnsplus/watch.list
 
-UCI_PKG="oxidnsplus"
-UCI_SECTION="main"
-INIT="/etc/init.d/oxidnsplus"
-CRON_FILE="/etc/crontabs/root"
-BEGIN_MARK="# oxidns-plus:begin"
-WARM_SH="/usr/libexec/oxidnsplus-warm.sh"
-DHCP_SH="/usr/libexec/oxidnsplus-dhcp-hosts.sh"
-DIAG_SH="/usr/libexec/oxidnsplus-diagnose.sh"
-WARM_STATE="/tmp/oxidnsplus-warm.state"
-DHCP_STATE="/tmp/oxidnsplus-dhcp.state"
-UCI_DEFAULTS="/usr/share/oxidnsplus/uci.defaults"
-LIST_DEFAULTS="/usr/share/oxidnsplus/warm.list.defaults"
-TMP_ROOT="${TMPDIR:-/tmp}"
-VERSION="0.2.0"
-
-# ---------------------------------------------------------------- JSON helpers
-
-json_escape_stream() {
-	awk 'BEGIN { ORS = "" }
-	{
-		if (NR > 1) printf "\\n";
-		for (i = 1; i <= length($0); i++) {
-			c = substr($0, i, 1);
-			if (c == "\\") printf "\\\\";
-			else if (c == "\"") printf "\\\"";
-			else if (c == "\t") printf "\\t";
-			else if (c == "\r") printf "\\r";
-			else printf "%s", c;
-		}
-	}'
-}
-
+# POSIX-sh JSON string escaping (busybox ash has no ${var//x/y} substitution).
+# Uses awk so newlines/tabs are handled without GNU-only sed multiline tricks.
 json_string() {
 	printf '"'
-	printf '%s' "${1:-}" | json_escape_stream
+	printf '%s' "$1" | awk 'BEGIN{ORS=""} {
+		gsub(/\\/, "\\\\"); gsub(/"/, "\\\"");
+		gsub(/\t/, "\\t"); gsub(/\r/, "\\r");
+		if (NR > 1) printf "\\n";
+		print;
+	}'
 	printf '"'
 }
-
-json_file_string() {
-	printf '"'
-	if [ -r "${1:-}" ]; then
-		json_escape_stream < "$1"
-	fi
-	printf '"'
-}
-
-json_bool() {
-	if [ "${1:-0}" = "1" ]; then printf 'true'; else printf 'false'; fi
-}
-
-json_error() {
-	printf '{"ok":false,"code":'
-	json_string "$1"
-	printf ',"message":'
-	json_string "$2"
-	printf '}\n'
-	return 1
-}
-
-# ---------------------------------------------------------------- input helpers
 
 input_value() {
-	KEY="$1"
-	INPUT="$2"
-	if command -v jsonfilter >/dev/null 2>&1; then
-		printf '%s' "$INPUT" | jsonfilter -e "@.$KEY" 2>/dev/null || true
-	else
-		printf '%s' "$INPUT" | sed -n "s/.*\"$KEY\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | sed -n '1p'
-	fi
+	local key="$1" input="$2"
+	printf '%s' "$input" | jsonfilter -e "@['$key']" 2>/dev/null || printf ''
 }
 
-input_has_key() {
-	printf '%s' "$2" | grep -q "\"$1\"[[:space:]]*:"
-}
+FIELDS="enabled config_path api_base api_user api_pass cache_tag dns_target watch_list mode tick grace refresh_delay min_ttl min_interval max_interval jitter retry_base retry_max retry_max_count log_level"
 
-input_bool_field() {
-	V="$(input_value "$1" "$2")"
-	case "$V" in
-		1|true|yes|on) printf '1'; return 0 ;;
-	esac
-	# jsonfilter is optional in the field; without it input_value only matches
-	# quoted strings. Also accept unquoted JSON scalars (true / 1).
-	V="$(printf '%s' "$2" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\([A-Za-z0-9_]*\).*/\1/p" | sed -n '1p')"
-	case "$V" in
-		1|true|yes|on) printf '1' ;;
-		*) printf '0' ;;
-	esac
-}
-
-# ---------------------------------------------------------------- UCI helpers
-
-uci_get() {
-	if command -v uci >/dev/null 2>&1; then
-		uci -q get "$UCI_PKG.$UCI_SECTION.$1" 2>/dev/null || printf '%s' "$2"
-	else
-		printf '%s' "$2"
-	fi
-}
-
-state_get() {
-	# state_get <file> <key> <default>
-	if [ -r "$1" ]; then
-		V="$(awk -v k="$2" -F= '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$1" 2>/dev/null)"
-		if [ -n "$V" ]; then printf '%s' "$V"; else printf '%s' "$3"; fi
-	else
-		printf '%s' "$3"
-	fi
-}
-
-# ---------------------------------------------------------------- validation
-
-valid_bool_value() {
-	case "$1" in 0|1) return 0 ;; *) return 1 ;; esac
-}
-
-valid_uint() {
-	case "$1" in
-		''|*[!0-9]*) return 1 ;;
-		*) return 0 ;;
-	esac
-}
-
-valid_abspath() {
-	case "$1" in
-		/*) ;;
-		*) return 1 ;;
-	esac
-	case "$1" in
-		*'..'*) return 1 ;;
-	esac
-	return 0
-}
-
-valid_single_line() {
-	printf '%s' "$1" | awk '
-		BEGIN { ok = 1; cr = sprintf("%c", 13) }
-		NR > 1 { ok = 0 }
-		index($0, cr) { ok = 0 }
-		END { exit ok ? 0 : 1 }
-	'
-}
-
-# ---------------------------------------------------------------- status
-
-emit_status() {
-	ENABLED=0
-	CRON=0
-	RUNNING=0
-	SCRIPTS=1
-	[ -x "$INIT" ] && "$INIT" enabled >/dev/null 2>&1 && ENABLED=1
-	[ -f "$CRON_FILE" ] && grep -qF "$BEGIN_MARK" "$CRON_FILE" && CRON=1
-	command -v pgrep >/dev/null 2>&1 && pgrep -x oxidns >/dev/null 2>&1 && RUNNING=1
-	for f in "$WARM_SH" "$DHCP_SH" "$DIAG_SH"; do
-		[ -x "$f" ] || SCRIPTS=0
-	done
-
-	printf '{"ok":true,"version":'
-	json_string "$VERSION"
-	printf ',"service":{"enabled":'
-	json_bool "$ENABLED"
-	printf ',"cron_installed":'
-	json_bool "$CRON"
-	printf ',"core_running":'
-	json_bool "$RUNNING"
-	printf ',"scripts_ok":'
-	json_bool "$SCRIPTS"
-	printf '}'
-	printf ',"warm":{"last_run":'
-	json_string "$(state_get "$WARM_STATE" last_run '-')"
-	printf ',"mode":'
-	json_string "$(state_get "$WARM_STATE" mode 'ttl')"
-	printf ',"poll_seconds":'
-	json_string "$(state_get "$WARM_STATE" poll_seconds '60')"
-	printf ',"total":'
-	json_string "$(state_get "$WARM_STATE" total '0')"
-	printf ',"due":'
-	json_string "$(state_get "$WARM_STATE" due '0')"
-	printf ',"skipped":'
-	json_string "$(state_get "$WARM_STATE" skipped '0')"
-	printf ',"queries_ok":'
-	json_string "$(state_get "$WARM_STATE" queries_ok '0')"
-	printf ',"queries_failed":'
-	json_string "$(state_get "$WARM_STATE" queries_failed '0')"
-	printf ',"rebuilt":'
-	json_string "$(state_get "$WARM_STATE" rebuilt '0')"
-	printf ',"note":'
-	json_string "$(state_get "$WARM_STATE" note '-')"
-	printf '}'
-	printf ',"dhcp":{"last_run":'
-	json_string "$(state_get "$DHCP_STATE" last_run '-')"
-	printf ',"leases":'
-	json_string "$(state_get "$DHCP_STATE" leases '0')"
-	printf ',"changed":'
-	json_string "$(state_get "$DHCP_STATE" changed '0')"
-	printf ',"reload":'
-	json_string "$(state_get "$DHCP_STATE" reload '-')"
-	printf '}}\n'
-}
-
-# ---------------------------------------------------------------- settings
-
-FIELDS="warm_enabled warm_interval warm_types warm_list warm_on_boot warm_wait_ready warm_margin_percent warm_min_ttl warm_max_ttl warm_noanswer_ttl warm_retry_ttl resolver resolver_port dig_timeout dig_tries sleep_between dhcp_enabled dhcp_interval lease_file lease_domain hosts_output dhcp_auto_reload reload_mode"
+uci_get() { uci -q get "oxidnsplus.main.$1" 2>/dev/null || printf ''; }
 
 emit_settings_read() {
-	printf '{"ok":true'
+	printf '{"ok":true,'
+	first=1
 	for f in $FIELDS; do
-		printf ',"%s":' "$f"
-		json_string "$(uci_get "$f" '')"
+		[ $first -eq 1 ] || printf ','
+		first=0
+		v="$(uci_get "$f")"
+		# Never expose the API password to the browser.
+		[ "$f" = "api_pass" ] && v=""
+		printf '"%s":' "$f"
+		if [ "$f" = "api_pass" ]; then
+			if [ -n "$(uci_get api_pass)" ]; then printf '"********"'; else printf '""'; fi
+		elif [ "$f" = "enabled" ]; then
+			[ "$v" = "1" ] && printf 'true' || printf 'false'
+		else
+			json_string "$v"
+		fi
 	done
 	printf '}\n'
 }
 
 emit_settings_save() {
 	INPUT="$(cat)"
-	if ! command -v uci >/dev/null 2>&1; then
-		json_error "uci_unavailable" "uci command not found"
-		return 1
-	fi
-
 	for f in $FIELDS; do
-		input_has_key "$f" "$INPUT" || continue
-		V="$(input_value "$f" "$INPUT")"
-		valid_single_line "$V" || { json_error "invalid_value" "$f must be a single-line value"; return 1; }
-		case "$f" in
-			warm_enabled|warm_on_boot|dhcp_enabled|dhcp_auto_reload)
-				valid_bool_value "$V" || { json_error "invalid_bool" "$f must be 0 or 1"; return 1; }
-				;;
-			warm_interval|warm_wait_ready|warm_min_ttl|warm_max_ttl|warm_noanswer_ttl|warm_retry_ttl|resolver_port|dig_timeout|dig_tries|dhcp_interval)
-				valid_uint "$V" || { json_error "invalid_number" "$f must be a non-negative integer"; return 1; }
-				;;
-			warm_margin_percent)
-				valid_uint "$V" || { json_error "invalid_number" "$f must be a non-negative integer"; return 1; }
-				if [ "$V" -gt 90 ] 2>/dev/null; then
-					json_error "invalid_percent" "warm_margin_percent must be <= 90"
-					return 1
-				fi
-				;;
-			sleep_between)
-				case "$V" in ''|*[!0-9.]*) json_error "invalid_number" "$f must be numeric"; return 1 ;; esac
-				;;
-			warm_types)
-				case "$V" in A|AAAA|'A AAAA'|'AAAA A') ;; *) json_error "invalid_types" "warm_types must be A, AAAA or both"; return 1 ;; esac
-				;;
-			reload_mode)
-				case "$V" in signal|restart) ;; *) json_error "invalid_mode" "reload_mode must be signal or restart"; return 1 ;; esac
-				;;
-			warm_list|lease_file|hosts_output)
-				valid_abspath "$V" || { json_error "invalid_path" "$f must be an absolute path without .."; return 1; }
-				;;
-			lease_domain)
-				case "$V" in *[!A-Za-z0-9.-]*) json_error "invalid_domain" "lease_domain contains unsupported characters"; return 1 ;; esac
-				;;
-			resolver)
-				case "$V" in *[!A-Za-z0-9.:]*) json_error "invalid_resolver" "resolver contains unsupported characters"; return 1 ;; esac
-				;;
-		esac
+		[ "$f" = "enabled" ] && continue
+		v="$(input_value "$f" "$INPUT")"
+		# Keep a masked password unchanged.
+		if [ "$f" = "api_pass" ] && [ "$v" = "********" ]; then continue; fi
+		uci -q set "oxidnsplus.main.$f=$v"
 	done
-
-	# Hardening: files we write must stay inside /etc/oxidns.
-	for f in warm_list hosts_output; do
-		V="$(input_value "$f" "$INPUT")"
-		[ -z "$V" ] && continue
-		case "$V" in
-			/etc/oxidns/*) ;;
-			*) json_error "invalid_path" "$f must be under /etc/oxidns/"; return 1 ;;
-		esac
-	done
-
-	uci -q set "$UCI_PKG.$UCI_SECTION=main" 2>/dev/null || true
-	for f in $FIELDS; do
-		input_has_key "$f" "$INPUT" || continue
-		V="$(input_value "$f" "$INPUT")"
-		uci -q set "$UCI_PKG.$UCI_SECTION.$f=$V" || {
-			json_error "uci_write_failed" "failed to set $f"
-			return 1
-		}
-	done
-	uci -q commit "$UCI_PKG" || { json_error "uci_commit_failed" "failed to commit UCI"; return 1; }
-
-	if [ -x "$INIT" ]; then
-		"$INIT" restart >/dev/null 2>&1 || true
+	en="$(input_value enabled "$INPUT")"
+	if [ -n "$en" ]; then
+		if [ "$en" = "true" ] || [ "$en" = "1" ]; then uci -q set oxidnsplus.main.enabled=1
+		else uci -q set oxidnsplus.main.enabled=0; fi
 	fi
-	emit_settings_read
+	uci -q commit oxidnsplus
+	[ -x /etc/init.d/oxidnsplus ] && /etc/init.d/oxidnsplus restart >/dev/null 2>&1 || true
+	printf '{"ok":true,"message":'$(json_string "Settings saved; prewarmer restarted.")'}\n'
 }
 
-# ---------------------------------------------------------------- actions
-
-run_script_json() {
-	# run_script_json <label> <script> [args...]
-	LABEL="$1"
-	shift
-	OUT_FILE="$(mktemp "$TMP_ROOT/oxidnsplus-$LABEL.XXXXXX")"
-	if "$@" >"$OUT_FILE" 2>&1; then
-		RC=0
+emit_status() {
+	if [ -r "$STATUS_FILE" ]; then
+		printf '{"ok":true,"status":'
+		cat "$STATUS_FILE"
+		printf '}\n'
 	else
-		RC=$?
+		printf '{"ok":false,"error":"no status file","hint":"is the prewarmer running?"}\n'
 	fi
-	printf '{"ok":'
-	[ "$RC" -eq 0 ] && printf 'true' || printf 'false'
-	printf ',"rc":"%s","output":' "$RC"
-	json_file_string "$OUT_FILE"
-	printf '}\n'
-	rm -f "$OUT_FILE"
-	return 0
-}
-
-emit_warm_now() {
-	[ -x "$WARM_SH" ] || { json_error "script_missing" "warmer is not executable"; return 1; }
-	run_script_json warm "$WARM_SH" --force
-}
-
-emit_dhcp_now() {
-	INPUT="$(cat)"
-	[ -x "$DHCP_SH" ] || { json_error "script_missing" "DHCP sync script is not executable"; return 1; }
-	if [ "$(input_bool_field reload "$INPUT")" = "1" ]; then
-		run_script_json dhcp "$DHCP_SH" --reload
-	else
-		run_script_json dhcp "$DHCP_SH"
-	fi
-}
-
-emit_diagnose() {
-	[ -x "$DIAG_SH" ] || { json_error "script_missing" "diagnostics script is not executable"; return 1; }
-	run_script_json diagnose "$DIAG_SH"
-}
-
-emit_query_test() {
-	INPUT="$(cat)"
-	NAME="$(input_value name "$INPUT")"
-	TYPE="$(input_value type "$INPUT")"
-	[ -n "$NAME" ] || NAME="www.google.com"
-	case "$TYPE" in A|AAAA) ;; *) TYPE="A" ;; esac
-	case "$NAME" in
-		*[!A-Za-z0-9._-]*) json_error "invalid_name" "invalid domain name"; return 1 ;;
-	esac
-	if ! command -v dig >/dev/null 2>&1; then
-		json_error "dig_missing" "bind-dig is required"; return 1
-	fi
-	RESOLVER="$(uci_get resolver '127.0.0.1')"
-	PORT="$(uci_get resolver_port '5333')"
-	OUT_FILE="$(mktemp "$TMP_ROOT/oxidnsplus-query.XXXXXX")"
-	dig "@$RESOLVER" -p "$PORT" +time=2 +tries=1 "$NAME" "$TYPE" >"$OUT_FILE" 2>&1 || true
-	MS="$(awk '/Query time:/ { print $4; exit }' "$OUT_FILE")"
-	printf '{"ok":true,"name":'
-	json_string "$NAME"
-	printf ',"type":'
-	json_string "$TYPE"
-	printf ',"query_ms":'
-	json_string "${MS:-unknown}"
-	printf ',"output":'
-	json_file_string "$OUT_FILE"
-	printf '}\n'
-	rm -f "$OUT_FILE"
 }
 
 emit_warm_list_read() {
-	LIST="$(uci_get warm_list '/etc/oxidns/warm.list')"
-	if [ ! -r "$LIST" ]; then
-		json_error "list_missing" "warm list not found"
-		return 1
+	if [ -r "$WATCH_LIST" ]; then
+		printf '{"ok":true,"content":'
+		json_string "$(cat "$WATCH_LIST")"
+		printf '}\n'
+	else
+		printf '{"ok":false,"error":"watch list not found"}\n'
 	fi
-	printf '{"ok":true,"path":'
-	json_string "$LIST"
-	printf ',"content":'
-	json_file_string "$LIST"
-	printf '}\n'
 }
 
 emit_warm_list_save() {
 	INPUT="$(cat)"
-	CONTENT="$(input_value content "$INPUT")"
-	LIST="$(uci_get warm_list '/etc/oxidns/warm.list')"
-	case "$LIST" in
-		/etc/oxidns/*) ;;
-		*) json_error "invalid_path" "warm_list must be under /etc/oxidns/"; return 1 ;;
-	esac
-	[ -n "$CONTENT" ] || { json_error "empty_content" "list content is empty"; return 1; }
-	LINES="$(printf '%s\n' "$CONTENT" | awk '{ n++ } END { print n + 0 }')"
-	if [ "$LINES" -gt 2000 ]; then
-		json_error "list_too_large" "warm list exceeds 2000 lines"
-		return 1
-	fi
-	TMP="$(mktemp "$TMP_ROOT/oxidnsplus-list.XXXXXX")"
-	printf '%s\n' "$CONTENT" > "$TMP" || { rm -f "$TMP"; json_error "write_failed" "cannot write temp file"; return 1; }
-	mkdir -p "$(dirname "$LIST")"
-	if ! mv "$TMP" "$LIST"; then
-		rm -f "$TMP"
-		json_error "write_failed" "cannot replace warm list"
-		return 1
-	fi
-	chmod 644 "$LIST" 2>/dev/null || true
-	# The list changed: drop the TTL baseline so the next pass re-evaluates it.
-	rm -f /tmp/oxidnsplus-warm.entries
-	printf '{"ok":true,"path":'
-	json_string "$LIST"
-	printf ',"lines":"%s"}\n' "$LINES"
+	content="$(input_value content "$INPUT")"
+	mkdir -p "$(dirname "$WATCH_LIST")"
+	printf '%s\n' "$content" > "$WATCH_LIST"
+	[ -x /etc/init.d/oxidnsplus ] && /etc/init.d/oxidnsplus restart >/dev/null 2>&1 || true
+	printf '{"ok":true}\n'
 }
 
-emit_restore_defaults() {
+emit_log() {
 	INPUT="$(cat)"
-	[ "$(input_bool_field confirm "$INPUT")" = "1" ] || {
-		json_error "not_confirmed" "confirm=1 is required"
-		return 1
-	}
-	[ -r "$UCI_DEFAULTS" ] || { json_error "defaults_missing" "uci.defaults not found"; return 1; }
-
-	UCI_FILE="/etc/config/$UCI_PKG"
-	if ! cp "$UCI_DEFAULTS" "$UCI_FILE" 2>/dev/null; then
-		json_error "restore_failed" "cannot restore UCI defaults"
-		return 1
-	fi
-	chmod 644 "$UCI_FILE" 2>/dev/null || true
-
-	RESTORED_LIST="no"
-	if [ -r "$LIST_DEFAULTS" ]; then
-		if cp "$LIST_DEFAULTS" /etc/oxidns/warm.list 2>/dev/null; then
-			chmod 644 /etc/oxidns/warm.list 2>/dev/null || true
-			RESTORED_LIST="yes"
-		fi
-	fi
-
-	if [ -x "$INIT" ]; then
-		"$INIT" cleanup >/dev/null 2>&1 || true
-		"$INIT" restart >/dev/null 2>&1 || true
-	fi
-
-	printf '{"ok":true,"uci_restored":"yes","warm_list_restored":'
-	json_string "$RESTORED_LIST"
-	printf ',"message":'
-	json_string "Plus settings and warm list reset to package defaults; runtime state cleared. /etc/oxidns/config.yaml was NOT touched."
+	n="$(input_value lines "$INPUT")"
+	case "$n" in ''|*[!0-9]*) n=100;; esac
+	[ "$n" -le 500 ] 2>/dev/null || n=500
+	printf '{"ok":true,"lines":'
+	json_string "$(logread -e '\[prewarmer\]' 2>/dev/null | tail -n "$n")"
 	printf '}\n'
 }
 
-# ---------------------------------------------------------------- dispatcher
-
+# dispatcher
 case "${1:-}" in
 	list)
 		printf '{'
 		printf '"status":{},'
 		printf '"settings_read":{},'
-		printf '"settings_save":{"warm_enabled":"string","warm_interval":"string","warm_types":"string","warm_list":"string","warm_on_boot":"string","warm_wait_ready":"string","warm_margin_percent":"string","warm_min_ttl":"string","warm_max_ttl":"string","warm_noanswer_ttl":"string","warm_retry_ttl":"string","resolver":"string","resolver_port":"string","dig_timeout":"string","dig_tries":"string","sleep_between":"string","dhcp_enabled":"string","dhcp_interval":"string","lease_file":"string","lease_domain":"string","hosts_output":"string","dhcp_auto_reload":"string","reload_mode":"string"},'
-		printf '"warm_now":{},'
+		printf '"settings_save":{'
+		first=1
+		for f in $FIELDS; do
+			[ $first -eq 1 ] || printf ','
+			first=0
+			printf '"%s":"string"' "$f"
+		done
+		printf '},'
 		printf '"warm_list_read":{},'
 		printf '"warm_list_save":{"content":"string"},'
-		printf '"dhcp_now":{"reload":"boolean"},'
-		printf '"diagnose":{},'
-		printf '"query_test":{"name":"string","type":"string"},'
-		printf '"restore_defaults":{"confirm":"boolean"}'
+		printf '"log":{"lines":"string"}'
 		printf '}\n'
 		;;
 	call)
@@ -464,13 +134,9 @@ case "${1:-}" in
 			status) emit_status ;;
 			settings_read) emit_settings_read ;;
 			settings_save) emit_settings_save ;;
-			warm_now) emit_warm_now ;;
 			warm_list_read) emit_warm_list_read ;;
 			warm_list_save) emit_warm_list_save ;;
-			dhcp_now) emit_dhcp_now ;;
-			diagnose) emit_diagnose ;;
-			query_test) emit_query_test ;;
-			restore_defaults) emit_restore_defaults ;;
+			log) emit_log ;;
 			*) printf '{"ok":false,"error":"unknown method"}\n'; exit 1 ;;
 		esac
 		;;

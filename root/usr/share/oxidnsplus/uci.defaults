@@ -1,37 +1,34 @@
 config main 'main'
-	# ---- cache warming (S1, TTL-aware) ----
-	option warm_enabled '1'
-	# Poll interval in MINUTES. crond only schedules; the warmer decides which
-	# (domain,type) pairs are actually due from their observed TTL.
-	option warm_interval '1'
-	option warm_types 'A AAAA'
-	option warm_list '/etc/oxidns/warm.list'
-	option warm_on_boot '1'
-	option warm_wait_ready '15'
-	# Refresh when this percent of the TTL remains (20 = refresh at 80% of TTL).
-	option warm_margin_percent '20'
-	# Clamps, in seconds, for the computed refresh interval.
-	option warm_min_ttl '30'
-	option warm_max_ttl '3600'
-	# Fallbacks when dig returns no answer section or the query fails.
-	option warm_noanswer_ttl '300'
-	option warm_retry_ttl '30'
-	option resolver '127.0.0.1'
-	option resolver_port '5333'
-	option dig_timeout '1'
-	option dig_tries '1'
-	option sleep_between '0'
+	# Master switch.
+	option enabled '1'
 
-	# ---- DHCP lease hostnames (S2) ----
-	# Off by default: a config reload drops cache entries newer than the last
-	# cache.dump (600 s). Turn on only after reading docs/CONFIGURATION.md.
-	option dhcp_enabled '0'
-	option dhcp_interval '10'
-	option lease_file '/tmp/dhcp.leases'
-	option lease_domain 'lan'
-	option hosts_output '/etc/oxidns/dhcp-hosts'
-	option dhcp_auto_reload '0'
+	# OxiDNS main config path (read-only; used to derive API base + username).
+	option config_path '/etc/oxidns/config.yaml'
+	option api_base ''
+	option api_user ''
+	# If config.yaml uses ${OXIDNS_API_PASS}, put the same value here (or export
+	# it in the environment). Leave empty if the API runs without auth.
+	option api_pass ''
 
-	# signal  = /etc/init.d/oxidns reload  (procd_send_signal, gentle)
-	# restart = /etc/init.d/oxidns restart (costs more cache, always effective)
-	option reload_mode 'signal'
+	# Cache plugin tag and the local DNS listener the probe query targets.
+	option cache_tag 'cache_main'
+	option dns_target '127.0.0.1:5333'
+
+	# Watch list + scheduling mode: list (only watch.list) or all (all cached).
+	option watch_list '/etc/oxidnsplus/watch.list'
+	option mode 'list'
+
+	# Scheduler timing.
+	option tick '5'
+	# Probes fire GRACE seconds AFTER fresh TTL expiry (into the stale window),
+	# so OxiDNS's native lazy cache performs the actual background refresh.
+	option grace '3'
+	option refresh_delay '1200'
+	option min_ttl '30'
+	option min_interval '10'
+	option max_interval '3600'
+	option jitter '5'
+	option retry_base '15'
+	option retry_max '300'
+	option retry_max_count '8'
+	option log_level 'info'
