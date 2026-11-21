@@ -3,9 +3,14 @@
 TTL-adaptive prewarming add-on for [OxiDNS](https://oxidns.org) 1.7.x on OpenWrt.
 
 This package keeps the domains you care about warm without deleting cache or
-querying any upstream by itself. It ships one small **static Rust binary**
-(`oxidns-prewarmer`, ~590 KB, musl) and a LuCI page. It never modifies
-`/etc/oxidns/config.yaml`. **x86_64 only.**
+querying any upstream by itself. It builds one small **static Rust binary**
+(`oxidns-prewarmer`, ~590 KB, musl) **from source at package-build time** using
+OpenWrt's native cross-toolchain, plus a LuCI page. It never modifies
+`/etc/oxidns/config.yaml`.
+
+Supported architectures mirror `oxidns-core`: **x86_64, aarch64, i386 and arm
+(armv6/armv7)**. There is no prebuilt binary and no GitHub Release — the target
+triple and cross linker are derived automatically from the OpenWrt build target.
 
 ## How it works
 
@@ -70,10 +75,12 @@ make -j$(nproc)
 > The subdirectory layout is what makes `feeds/oxidnsplus.index` generate
 > correctly.
 
-The package installs one prebuilt static binary for **x86_64** only. To rebuild
-it from source, run `scripts/build.sh` from the package directory (needs Rust
-1.83+ with the `x86_64-unknown-linux-musl` target and gcc). It is built fully
-static against musl, so it drops into any x86_64 OpenWrt image regardless of libc.
+The `oxidns-prewarmer` binary is compiled during `make` by OpenWrt's
+`feeds/packages/lang/rust` toolchain (`rust/host` + `rust-package.mk`), using the
+target's own musl cross compiler. Nothing is downloaded and the repository
+ships no prebuilt binary. For workstation-side checks, run `scripts/build.sh`
+from the package directory (needs Rust 1.83+ and the musl targets); it compiles
+and verifies all five architectures into the gitignored `build/` directory.
 
 **Runtime requirement:** OxiDNS 1.7.x already installed and running, with a
 DNS listener (default `127.0.0.1:5333`) and a management API. The add-on reads
@@ -111,12 +118,12 @@ Requirements for the OxiDNS side (in your v9 config): `cache.lazy_cache_ttl > 0`
 
 ```
 <repo>/luci-app-oxidns-plus/   <- this package (single feed entry)
-  src/prewarmer-rs/  Rust source (pure stdlib, zero crates) + unit tests
-  src/bin/           prebuilt static binary (prewarmer-x86_64)
+  src/prewarmer-rs/  Rust source (pure stdlib, zero crates) + Cargo.lock + unit tests
   root/              OpenWrt files (init, UCI, rpcd, menu, ACL, defaults)
   htdocs/            LuCI view
   po/                zh_Hans translations
-  scripts/           build.sh (musl build + tests), check.sh (static validation)
+  scripts/           build.sh (local 5-arch musl build + tests), check.sh (static validation)
+  (no src/bin/: binary is built from source by OpenWrt at package-build time)
 ```
 
 ## Design notes

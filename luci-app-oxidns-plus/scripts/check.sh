@@ -67,7 +67,8 @@ required = [
     'htdocs/luci-static/resources/view/oxidnsplus/plus.js',
     'po/zh_Hans/oxidnsplus.po',
     'scripts/build.sh','scripts/check.sh',
-    'src/prewarmer-rs/Cargo.toml','src/prewarmer-rs/src/main.rs',
+    'src/prewarmer-rs/Cargo.toml','src/prewarmer-rs/Cargo.lock',
+    'src/prewarmer-rs/src/main.rs',
     'src/prewarmer-rs/src/scheduler.rs','src/prewarmer-rs/src/api.rs',
     'src/prewarmer-rs/src/json.rs','src/prewarmer-rs/src/dns.rs',
     'src/prewarmer-rs/src/model.rs',
@@ -75,11 +76,12 @@ required = [
 for rel in required:
     if not os.path.isfile(os.path.join(root, rel)): bad('missing ' + rel)
 
-p = os.path.join(root, 'src/bin', 'prewarmer-x86_64')
-if not os.path.isfile(p) or os.path.getsize(p) < 100000:
-    bad('missing/invalid binary prewarmer-x86_64')
+# No prebuilt binary may be committed: the package is built from source by
+# OpenWrt's Rust toolchain at package-build time.
+if os.path.isdir(os.path.join(root, 'src', 'bin')):
+    bad('src/bin/ must not exist (binary is built at package-build time)')
 if not fail:
-    print('  OK   required files + x86_64 binary present')
+    print('  OK   required source files present, no prebuilt binary')
 
 rpcd = read('root/usr/libexec/rpcd/luci.oxidnsplus')
 acl = json.loads(read('root/usr/share/rpcd/acl.d/luci-app-oxidns-plus.json'))
@@ -127,6 +129,21 @@ vp = menu.get('admin/services/oxidnsplus/plus',{}).get('action',{}).get('path')
 if vp and not os.path.isfile(os.path.join(root,'htdocs/luci-static/resources/view',vp+'.js')):
     bad('menu view has no JS: ' + vp)
 if 'PKG_NAME:=luci-app-oxidns-plus' not in mk: bad('Makefile package name mismatch')
+
+# Source-build contract: must use OpenWrt's Rust toolchain, no prebuilt binary,
+# and the architecture gate must mirror oxidns-core (x86_64/aarch64/i386/arm).
+for needle, label in [
+    ('rust-package.mk', 'Makefile missing rust-package.mk include'),
+    ('PKG_BUILD_DEPENDS:=rust/host', 'Makefile missing rust/host build dep'),
+    ('MAKE_PATH:=src/prewarmer-rs', 'Makefile missing MAKE_PATH'),
+    ('$(PKG_INSTALL_DIR)/bin/oxidns-prewarmer', 'install does not use cargo output'),
+]:
+    if needle not in mk: bad(label)
+if 'LUCI_PKGARCH:=x86_64' in mk: bad('Makefile still pins x86_64')
+if '@(x86_64||aarch64||i386||arm)' not in mk:
+    bad('architecture gate does not mirror oxidns-core')
+if not fail:
+    print('  OK   source-build Makefile (rust-package.mk, arch gate, cargo output)')
 
 # HARD RULE: must not modify OxiDNS main config anywhere.
 for rel in ['root/etc/init.d/oxidnsplus','root/usr/libexec/rpcd/luci.oxidnsplus',

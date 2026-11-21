@@ -4,44 +4,58 @@
 # Licensed under GPL-3.0-or-later. See /LICENSE.
 #
 # luci-app-oxidns-plus is an ADD-ON for an existing OxiDNS 1.7.x runtime.
-# It ships a single static Rust binary (oxidns-prewarmer, built from
-# src/prewarmer-rs against x86_64-unknown-linux-musl) that performs
-# TTL-adaptive stale-hit prewarming by talking to OxiDNS's own management API
-# and DNS listener. It does NOT ship or modify the OxiDNS core, and it never
-# reads or writes /etc/oxidns/config.yaml.
+# It builds a small static Rust binary (oxidns-prewarmer) from the vendored
+# src/prewarmer-rs source at package-build time, using OpenWrt's native Rust
+# cross-toolchain (feeds/packages/lang/rust + package/libs/libstd-rust). No
+# prebuilt binary and no GitHub Release are involved: the target architecture
+# is derived from $(ARCH) by rust-values.mk, so every supported architecture
+# gets a binary compiled with its own musl toolchain.
 #
-# Only x86_64 is supported: the prebuilt musl binary targets that architecture.
+# It performs TTL-adaptive stale-hit prewarming by talking to OxiDNS's own
+# management API and DNS listener. It does NOT ship or modify the OxiDNS core,
+# and it never reads or writes /etc/oxidns/config.yaml.
+#
+# Supported architectures mirror oxidns-core: x86_64, aarch64, i386 and arm
+# (armv6 / armv7 are distinguished by rust-values.mk from CONFIG_arm_v6/v7).
 #
 
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-oxidns-plus
 PKG_VERSION:=0.3.0
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 PKG_LICENSE:=GPL-3.0-or-later
 PKG_LICENSE_FILES:=LICENSE
 PKG_MAINTAINER:=NetForgeCN
 
 LUCI_TITLE:=OxiDNS Plus - TTL-adaptive prewarming
-LUCI_DEPENDS:=+luci-base +rpcd +jsonfilter @x86_64
+# Architecture gate mirrors oxidns-core. $(RUST_ARCH_DEPENDS) from
+# rust-values.mk is intentionally not used: it is broader (mips/ppc/riscv/...)
+# than the architectures this package is validated for.
+LUCI_DEPENDS:=+luci-base +rpcd +jsonfilter @(x86_64||aarch64||i386||arm)
 
-# The package ships a prebuilt static binary, so it is arch-specific and must
-# be rebuilt per target. Only x86_64 is supported.
-LUCI_PKGARCH:=x86_64
+# Pure Rust package: build for every target arch, so no arch pinning.
+LUCI_PKGARCH:=
 
-# Single prebuilt binary: Rust, x86_64-unknown-linux-musl, fully static.
-# Rebuild with scripts/build.sh (needs a Rust toolchain + musl target).
-PREWARMER_BIN:=prewarmer-x86_64
+# Rust source lives in the feed itself (no PKG_SOURCE download).
+PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
+# Relative path inside PKG_BUILD_DIR that contains Cargo.toml.
+MAKE_PATH:=src/prewarmer-rs
+
+# Use OpenWrt's host Rust toolchain; rust-package.mk derives the target
+# musl triple and cross linker from $(ARCH)/$(REAL_GNU_TARGET_NAME).
+PKG_BUILD_DEPENDS:=rust/host
 
 define Package/luci-app-oxidns-plus/description
   Adds a LuCI page, UCI settings, a procd-managed binary and an rpcd API on top
-  of an existing OxiDNS installation. A small static Rust daemon reads the OxiDNS
-  cache API for TTL truth, maintains one independent deadline per (domain,qtype)
-  and fires a query at OxiDNS's own listener just after fresh expiry so the
-  native lazy cache refreshes in the background. TTL changes are followed,
-  retries back off, single-flight and jitter are enforced, and the old cache is
-  always kept. The OxiDNS main config is never read or written.
+  of an existing OxiDNS installation. A small static Rust daemon is compiled
+  from source at package-build time with the OpenWrt cross-toolchain. It reads
+  the OxiDNS cache API for TTL truth, maintains one independent deadline per
+  (domain,qtype) and fires a query at OxiDNS's own listener just after fresh
+  expiry so the native lazy cache refreshes in the background. TTL changes are
+  followed, retries back off, single-flight and jitter are enforced, and the
+  old cache is always kept. The OxiDNS main config is never read or written.
 endef
 
 define Package/luci-app-oxidns-plus/conffiles
@@ -98,17 +112,20 @@ fi
 exit 0
 endef
 
+# Copy the vendored Rust source into the build dir. No download, so Build/Prepare
+# is defined explicitly rather than relying on the default PKG_SOURCE unpack.
 define Build/Prepare
 	mkdir -p $(PKG_BUILD_DIR)
+	$(CP) ./src/prewarmer-rs/. $(PKG_BUILD_DIR)/src/prewarmer-rs/
 endef
 
-define Build/Compile
-	true
-endef
+# Build/Compile is supplied by rust-package.mk (Build/Compile/Cargo), which
+# runs: cargo install --path $(PKG_BUILD_DIR)/$(MAKE_PATH) --root $(PKG_INSTALL_DIR)
+# The resulting binary is at $(PKG_INSTALL_DIR)/bin/oxidns-prewarmer.
 
 define Package/luci-app-oxidns-plus/install
 	$(INSTALL_DIR) $(1)/usr/libexec
-	$(INSTALL_BIN) $(CURDIR)/src/bin/$(PREWARMER_BIN) $(1)/usr/libexec/oxidns-prewarmer
+	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/bin/oxidns-prewarmer $(1)/usr/libexec/oxidns-prewarmer
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./root/etc/init.d/oxidnsplus $(1)/etc/init.d/oxidnsplus
 	$(INSTALL_DIR) $(1)/usr/libexec/rpcd
@@ -129,5 +146,9 @@ define Package/luci-app-oxidns-plus/install
 endef
 
 include $(TOPDIR)/feeds/luci/luci.mk
+# rust-package.mk overrides Build/Compile with Build/Compile/Cargo and defines
+# RUST_ARCH_DEPENDS / target triples. Include after luci.mk is fine: luci.mk
+# does not define Build/Compile.
+include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk
 
 $(eval $(call BuildPackage,luci-app-oxidns-plus))

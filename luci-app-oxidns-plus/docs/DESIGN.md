@@ -2,10 +2,17 @@
 
 ## Scope
 
-A single static Rust daemon (x86_64-unknown-linux-musl) + LuCI/rpcd/UCI. No
-changes to the OxiDNS core, no edits to `config.yaml`, no second cache
-implementation. Zero external crates: JSON/HTTP/DNS are implemented with the
-standard library so the binary stays small and has no supply-chain surface.
+A single static Rust daemon + LuCI/rpcd/UCI. No changes to the OxiDNS core, no
+edits to `config.yaml`, no second cache implementation. Zero external crates:
+JSON/HTTP/DNS are implemented with the standard library so the binary stays
+small and has no supply-chain surface.
+
+The daemon is compiled from source at package-build time by OpenWrt's native
+Rust cross-toolchain (`rust/host` + `rust-package.mk`), which derives the musl
+target triple and linker from `$(ARCH)`. Supported architectures mirror
+`oxidns-core`: x86_64, aarch64, i386, arm (armv6/armv7). No prebuilt binary is
+committed and no GitHub Release is downloaded. The source is platform-neutral
+(no `cfg(target_arch)`, no inline asm, no pointer-width assumptions).
 
 ## Lifecycle of one entry (stale-hit trigger)
 
@@ -65,7 +72,8 @@ no flush, no insert, no config write.
 
 ## Verification
 
-- `scripts/build.sh`: Rust unit tests + x86_64 musl static build.
+- `scripts/build.sh`: Rust unit tests + static musl builds for all five
+  architectures (x86_64/aarch64/i386/armv7/armv6), using rust-lld per target.
 - `scripts/check.sh`: shell/JS/JSON syntax, cargo tests, i18n completeness,
   rpcd list/call/ACL alignment, UCI/JS field alignment, hard-rule assertions.
 - End-to-end (development): real binary driven against a mock OxiDNS
